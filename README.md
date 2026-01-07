@@ -44,6 +44,15 @@ Complete implementation of the Variant Call Format specification (VCFv4.3):
 - **Block length calculation**: Automatic calculation of reference block spans
 - **Mixed variants**: Support for variants with both alternate alleles and `<*>`
 
+### Validation (Complete)
+- **ID pattern validation**: Enforce VCF v4.3 ID naming rules (alphanumeric, underscore, period)
+- **Header validation**: Check fileformat line, unique IDs, unique sample names
+- **Field validation**: Validate REF (nucleotides), ALT (nucleotides/symbolic/breakend), POS (integers)
+- **QUAL validation**: Ensure QUAL is number or dot
+- **Metadata validation**: Validate INFO/FORMAT/FILTER keys against header definitions
+- **Record validation**: Comprehensive record validation with detailed error reporting
+- **Validation result API**: Accumulate and query validation errors
+
 ## Quick Start
 
 ### Using the Library
@@ -198,6 +207,7 @@ This is a prototype candidate library for Boost. Contributions are welcome!
 - ✅ **Phase 2: Extended features** - Metadata parsing, validation, percent encoding
 - ✅ **Phase 3: Structural variants** - Support for `<DEL>`, `<INS>`, breakends, SVTYPE/END/SVLEN
 - ✅ **Phase 4: gVCF support** - Reference blocks with `<*>` allele, END field, MIN_DP
-- 📋 **Phase 5: BCF binary format** - Binary compressed VCF
+- ✅ **Validation** - Comprehensive VCF v4.3 spec compliance validation
+- 📋 **Phase 5: BCF binary format** - Binary compressed VCF (requires external dependencies)
 - 📋 **Phase 6: BGZF compression** - Block compression support
 - 📋 **Phase 7: Tabix indexing** - Random access by genomic region

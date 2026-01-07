@@ -1028,3 +1028,234 @@ TEST_CASE("Genotype type checking", "[vcf][phase4]") {
         REQUIRE_FALSE(vcf::is_no_call_genotype("0/1"));
     }
 }
+
+// ============================================================================
+// VALIDATION TESTS
+// ============================================================================
+
+TEST_CASE("VCF ID pattern validation", "[vcf][validation]") {
+    SECTION("Valid IDs") {
+        REQUIRE(vcf::is_valid_vcf_id("DP"));
+        REQUIRE(vcf::is_valid_vcf_id("AF"));
+        REQUIRE(vcf::is_valid_vcf_id("_private"));
+        REQUIRE(vcf::is_valid_vcf_id("GENE.1"));
+        REQUIRE(vcf::is_valid_vcf_id("INFO123"));
+        REQUIRE(vcf::is_valid_vcf_id("1000G"));  // Special exception
+    }
+    
+    SECTION("Invalid IDs") {
+        REQUIRE_FALSE(vcf::is_valid_vcf_id(""));  // Empty
+        REQUIRE_FALSE(vcf::is_valid_vcf_id("123"));  // Starts with digit
+        REQUIRE_FALSE(vcf::is_valid_vcf_id("ID-VALUE"));  // Contains hyphen
+        REQUIRE_FALSE(vcf::is_valid_vcf_id("ID VALUE"));  // Contains space
+        REQUIRE_FALSE(vcf::is_valid_vcf_id(".ID"));  // Starts with dot
+    }
+}
+
+TEST_CASE("Position validation", "[vcf][validation]") {
+    SECTION("Valid positions") {
+        REQUIRE(vcf::is_valid_pos("1"));
+        REQUIRE(vcf::is_valid_pos("100"));
+        REQUIRE(vcf::is_valid_pos("0"));  // Telomere
+        REQUIRE(vcf::is_valid_pos("248956422"));
+    }
+    
+    SECTION("Invalid positions") {
+        REQUIRE_FALSE(vcf::is_valid_pos(""));
+        REQUIRE_FALSE(vcf::is_valid_pos("-1"));
+        REQUIRE_FALSE(vcf::is_valid_pos("1.5"));
+        REQUIRE_FALSE(vcf::is_valid_pos("abc"));
+    }
+}
+
+TEST_CASE("REF allele validation", "[vcf][validation]") {
+    SECTION("Valid REF") {
+        REQUIRE(vcf::is_valid_ref("A"));
+        REQUIRE(vcf::is_valid_ref("ACGT"));
+        REQUIRE(vcf::is_valid_ref("N"));
+        REQUIRE(vcf::is_valid_ref("acgt"));  // Case insensitive
+    }
+    
+    SECTION("Invalid REF") {
+        REQUIRE_FALSE(vcf::is_valid_ref(""));  // Empty
+        REQUIRE_FALSE(vcf::is_valid_ref("X"));  // Invalid nucleotide
+        REQUIRE_FALSE(vcf::is_valid_ref("A-T"));  // Contains hyphen
+    }
+}
+
+TEST_CASE("ALT allele validation", "[vcf][validation]") {
+    SECTION("Valid ALT - nucleotides") {
+        REQUIRE(vcf::is_valid_alt("A"));
+        REQUIRE(vcf::is_valid_alt("ACGT"));
+        REQUIRE(vcf::is_valid_alt("N"));
+    }
+    
+    SECTION("Valid ALT - special symbols") {
+        REQUIRE(vcf::is_valid_alt("."));  // No variant
+        REQUIRE(vcf::is_valid_alt("*"));  // Overlapping deletion
+    }
+    
+    SECTION("Valid ALT - symbolic alleles") {
+        REQUIRE(vcf::is_valid_alt("<DEL>"));
+        REQUIRE(vcf::is_valid_alt("<INS>"));
+        REQUIRE(vcf::is_valid_alt("<DUP>"));
+        REQUIRE(vcf::is_valid_alt("<NON_REF>"));
+    }
+    
+    SECTION("Valid ALT - breakend notation") {
+        REQUIRE(vcf::is_valid_alt("G[chr17:198982["));
+        REQUIRE(vcf::is_valid_alt("]chr13:123456]T"));
+    }
+    
+    SECTION("Invalid ALT") {
+        REQUIRE_FALSE(vcf::is_valid_alt(""));  // Empty
+        REQUIRE_FALSE(vcf::is_valid_alt("X"));  // Invalid nucleotide
+        REQUIRE_FALSE(vcf::is_valid_alt("<>"));  // Empty symbolic
+    }
+}
+
+TEST_CASE("QUAL validation", "[vcf][validation]") {
+    SECTION("Valid QUAL") {
+        REQUIRE(vcf::is_valid_qual("."));  // Missing
+        REQUIRE(vcf::is_valid_qual("30"));
+        REQUIRE(vcf::is_valid_qual("30.5"));
+        REQUIRE(vcf::is_valid_qual("0"));
+        REQUIRE(vcf::is_valid_qual("99.99"));
+    }
+    
+    SECTION("Invalid QUAL") {
+        REQUIRE_FALSE(vcf::is_valid_qual(""));
+        REQUIRE_FALSE(vcf::is_valid_qual("abc"));
+        REQUIRE_FALSE(vcf::is_valid_qual("30.5.2"));  // Multiple dots
+    }
+}
+
+TEST_CASE("Record field validation", "[vcf][validation]") {
+    const std::string test_file = "test_validation_record.vcf";
+    {
+        std::ofstream out(test_file.c_str());
+        out << "##fileformat=VCFv4.3\n";
+        out << "##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Depth\">\n";
+        out << "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n";
+        out << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSample1\n";
+        out << "chr1\t100\t.\tA\tG\t30\tPASS\tDP=50\tGT\t0/1\n";
+        out.close();
+    }
+    
+    vcf::reader reader(test_file);
+    vcf::record rec;
+    REQUIRE(reader.read_record(rec));
+    
+    SECTION("Valid record passes validation") {
+        vcf::validation_result result;
+        rec.validate_basic_fields(result);
+        REQUIRE(result.is_valid());
+        REQUIRE(result.error_count() == 0);
+    }
+    
+    SECTION("Invalid REF detected") {
+        rec.set_ref("X");  // Invalid nucleotide
+        vcf::validation_result result;
+        rec.validate_basic_fields(result);
+        REQUIRE_FALSE(result.is_valid());
+        REQUIRE(result.error_count() > 0);
+    }
+    
+    SECTION("Invalid ALT detected") {
+        std::vector<std::string> alt;
+        alt.push_back("XYZ");  // Invalid nucleotides
+        rec.set_alt(alt);
+        vcf::validation_result result;
+        rec.validate_basic_fields(result);
+        REQUIRE_FALSE(result.is_valid());
+    }
+    
+    std::remove(test_file.c_str());
+}
+
+TEST_CASE("Header validation", "[vcf][validation]") {
+    SECTION("Valid header passes") {
+        const std::string test_file = "test_valid_header.vcf";
+        {
+            std::ofstream out(test_file.c_str());
+            out << "##fileformat=VCFv4.3\n";
+            out << "##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Depth\">\n";
+            out << "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n";
+            out << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSample1\n";
+            out.close();
+        }
+        
+        vcf::reader reader(test_file);
+        vcf::validation_result result = reader.validate_header();
+        REQUIRE(result.is_valid());
+        
+        std::remove(test_file.c_str());
+    }
+    
+    SECTION("Duplicate sample names detected") {
+        const std::string test_file = "test_dup_samples.vcf";
+        {
+            std::ofstream out(test_file.c_str());
+            out << "##fileformat=VCFv4.3\n";
+            out << "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n";
+            out << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSample1\tSample1\n";
+            out.close();
+        }
+        
+        vcf::reader reader(test_file);
+        vcf::validation_result result = reader.validate_header();
+        REQUIRE_FALSE(result.is_valid());
+        REQUIRE(result.error_count() > 0);
+        
+        std::remove(test_file.c_str());
+    }
+}
+
+TEST_CASE("INFO/FORMAT key validation against header", "[vcf][validation]") {
+    const std::string test_file = "test_key_validation.vcf";
+    {
+        std::ofstream out(test_file.c_str());
+        out << "##fileformat=VCFv4.3\n";
+        out << "##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Depth\">\n";
+        out << "##FILTER=<ID=LowQual,Description=\"Low quality\">\n";
+        out << "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n";
+        out << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSample1\n";
+        out << "chr1\t100\t.\tA\tG\t30\tPASS\tDP=50\tGT\t0/1\n";
+        out << "chr1\t200\t.\tC\tT\t10\tLowQual\tUNDEFINED=1\tGT\t0/1\n";
+        out.close();
+    }
+    
+    vcf::reader reader(test_file);
+    
+    SECTION("Valid INFO key passes") {
+        vcf::record rec;
+        REQUIRE(reader.read_record(rec));
+        
+        vcf::validation_result result;
+        rec.validate_against_header(
+            reader.info_metadata(),
+            reader.format_metadata(),
+            reader.filter_metadata(),
+            result
+        );
+        REQUIRE(result.is_valid());
+    }
+    
+    SECTION("Undefined INFO key detected") {
+        vcf::record rec1, rec2;
+        reader.read_record(rec1);
+        REQUIRE(reader.read_record(rec2));
+        
+        vcf::validation_result result;
+        rec2.validate_against_header(
+            reader.info_metadata(),
+            reader.format_metadata(),
+            reader.filter_metadata(),
+            result
+        );
+        REQUIRE_FALSE(result.is_valid());
+        REQUIRE(result.error_count() > 0);
+    }
+    
+    std::remove(test_file.c_str());
+}

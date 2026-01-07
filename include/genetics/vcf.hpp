@@ -15,6 +15,7 @@
 #include <genetics/vcf_phase2.hpp>
 #include <genetics/vcf_phase3.hpp>
 #include <genetics/vcf_phase4.hpp>
+#include <genetics/vcf_validation.hpp>
 
 namespace boost {
 namespace genetics {
@@ -242,6 +243,47 @@ public:
         return end - static_cast<int>(pos_) + 1;
     }
 
+    // ========================================================================
+    // VALIDATION METHODS
+    // ========================================================================
+
+    /// @brief Validate basic record fields
+    /// @param result Validation result to accumulate errors
+    /// @param line_num Line number for error reporting
+    void validate_basic_fields(validation_result& result, std::size_t line_num = 0) const {
+        // Validate REF
+        if (!is_valid_ref(ref_)) {
+            result.add_error("Invalid REF allele: " + ref_, line_num, "REF");
+        }
+        
+        // Validate ALT alleles
+        for (std::size_t i = 0; i < alt_.size(); ++i) {
+            if (!is_valid_alt(alt_[i])) {
+                result.add_error("Invalid ALT allele: " + alt_[i], line_num, "ALT");
+            }
+        }
+    }
+
+    /// @brief Validate record against header metadata
+    template<typename InfoMap, typename FormatMap, typename FilterMap>
+    void validate_against_header(const InfoMap& info_meta,
+                                  const FormatMap& format_meta,
+                                  const FilterMap& filter_meta,
+                                  validation_result& result,
+                                  std::size_t line_num = 0) const {
+        // Validate FILTER
+        validate_filter(filter_, filter_meta, line_num, result);
+        
+        // Validate INFO keys
+        std::string info_str = get_info_string();
+        validate_info_keys(info_str, info_meta, line_num, result);
+        
+        // Validate FORMAT keys
+        if (!format_.empty()) {
+            validate_format_keys(format_, format_meta, line_num, result);
+        }
+    }
+
     /// @brief Convert record to VCF line format
     std::string to_string(const std::vector<std::string>& sample_names = std::vector<std::string>()) const {
         std::ostringstream oss;
@@ -438,6 +480,29 @@ public:
             records.push_back(rec);
         }
         return records;
+    }
+
+    /// @brief Validate file header
+    /// @return validation_result with any errors found
+    validation_result validate_header() const {
+        validation_result result;
+        
+        // Check fileformat is first line
+        if (header_lines_.empty() || !validate_fileformat(header_lines_[0], result)) {
+            if (result.is_valid()) {  // Only add if not already added
+                result.add_error("Missing or invalid ##fileformat line", 1);
+            }
+        }
+        
+        // Validate ID patterns in metadata
+        check_duplicate_ids(info_defs_, "INFO", result);
+        check_duplicate_ids(format_defs_, "FORMAT", result);
+        check_duplicate_ids(filter_defs_, "FILTER", result);
+        
+        // Validate sample names are unique
+        validate_sample_names(sample_names_, result);
+        
+        return result;
     }
 
 private:
