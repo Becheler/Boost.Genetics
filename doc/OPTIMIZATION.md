@@ -2,10 +2,59 @@
 
 ## Executive Summary
 
-Current baseline: **234 records/sec** vs bcftools: **11,826 records/sec** (50x gap)  
-Target: **3,900-5,900 records/sec** (within 2-3x of bcftools - excellent for header-only C++11 library)
+**Progress Update (Jan 2026)**:
+- Baseline: **234 records/sec** 
+- Current: **3,790 records/sec** (16.2x improvement ✅)
+- bcftools: **11,611 records/sec**
+- Gap: **3.1x** (down from 50x!)
 
-This document outlines systematic optimization strategies to close the performance gap.
+**Deep Audit Findings**: Identified **401 million string allocations** as primary bottleneck.  
+**Next Steps**: Indexed format + string_view storage → projected 6,200-9,300 rec/s (1.2-1.9x of bcftools)
+
+This document outlines systematic optimization strategies to close the remaining performance gap.
+
+---
+
+## 0. Deep Performance Audit Summary
+
+### Bottleneck Analysis (Profiling Results)
+
+**Time breakdown**:
+```
+I/O:          0.0002s  (0.01%)  ← Not the bottleneck!
+Parsing:      1.6540s  (99.9%)  ← THE BOTTLENECK
+Other:        0.0007s  (0.04%)
+```
+
+**Within parse_record() (99.9% of time)**:
+- Sample parsing: 95% (3,202 samples × 10 fields each)
+- INFO parsing: 3%
+- Fixed fields: 2%
+
+### Root Cause: String Allocation Tsunami
+
+**Per-record allocations** (6,272 records in test file):
+- Fixed fields (CHROM, POS, ID, REF, ALT, QUAL, FILTER): ~10 strings
+- INFO fields (~15 key-value pairs): ~30 strings  
+- FORMAT field names (10 fields): ~10 strings
+- Sample values (3,202 samples × 10 fields): **32,020 strings**
+- **Total per record: ~32,070 string allocations**
+
+**Full file parse**: 32,070 × 6,272 = **201,206,880 string objects created**  
+**Including keys**: Each sample stores keys too = **401,658,880 total allocations**
+
+### Micro-Benchmark: Storage Strategy Comparison
+
+Testing 3,202 samples × 6,272 records × 10 fields = 200,829,440 values:
+
+| Strategy | Records/sec | Allocations | Speedup |
+|----------|-------------|-------------|---------|
+| **Current** (pair<string,string>) | 4,293 | 401M | baseline |
+| **Indexed** (vector<string>, no keys) | 5,468 | 200M | ⬆ **27%** |
+| **String_view** (zero-copy) | 5,575 | 0 | ⬆ **30%** |
+
+**Key Insight**: We're duplicating format field names 3,202 times per record!  
+**Solution**: Store format fields once, samples are just value arrays.
 
 ---
 
@@ -56,64 +105,171 @@ auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
 
 ## 2. High-Impact Optimizations
 
-### 2.1 String View Parsing (Expected: 10-30x improvement)
+### ✅ COMPLETED: Phase 1 Optimizations (16.2x achieved)
 
-**Problem:** Every field creates new `std::string` allocations
+#### 2.1 String View Parsing ✅ DONE
+**Impact**: 1.88x improvement (234 → 441 rec/s)  
+**Implementation**: Upgraded to C++17, used std::string_view throughout parse_record()
 ```cpp
-// Current: Allocates 10+ strings per record
+// Before: Many allocations
 std::string chrom = line.substr(0, tab1);
 std::string pos_str = line.substr(tab1+1, tab2-tab1-1);
-int pos = std::stoi(pos_str);  // Another allocation in stoi
-```
 
-**Solution:** Zero-copy parsing with string_view
-```cpp
-// C++17: Use std::string_view natively
-#include <string_view>
-
-// Parse without allocation
+// After: Zero-copy parsing
 std::string_view chrom(line.data(), tab1);
-int pos = parse_int_fast(line.data() + tab1 + 1, tab2 - tab1 - 1);
+int pos = detail::parse_uint_fast(line.data() + tab1 + 1);
 ```
 
-**Implementation Plan:**
-1. Use `std::string_view` from C++17 standard library
-2. Add fast integer parsers (avoid `std::stoi`, `std::strtol`)
-3. Rewrite `parse_line()` to use views
-4. Convert to `std::string` only when storing
+#### 2.2 Fast Integer Parsing ✅ DONE
+**Impact**: Included in string_view improvements  
+**Implementation**: Custom parse_uint_fast() and parse_double_fast()
+```cpp
+inline unsigned int parse_uint_fast(const char* str) noexcept {
+    unsigned int result = 0;
+    while (*str >= '0' && *str <= '9') {
+        result = result * 10 + (*str - '0');
+        ++str;
+    }
+    return result;
+}
+```
 
-**Expected Impact:** 15-25x speedup (most allocations eliminated)
+#### 2.3 Compiler Optimization ✅ DONE  
+**Impact**: 7.8x improvement (441 → 3,440 rec/s) - **BIGGEST WIN!**  
+**Implementation**: Added -O3 -g -fno-omit-frame-pointer to CMakeLists.txt
+```cmake
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -g -fno-omit-frame-pointer")
+```
+
+#### 2.4 Vector-Based Sample Storage ✅ DONE
+**Impact**: 1.1x improvement (3,440 → 3,790 rec/s)  
+**Implementation**: Replaced std::map<string,string> with vector<pair<string,string>>
+```cpp
+// Before: Red-black tree with poor cache locality
+std::vector<std::map<std::string, std::string>> samples_;
+
+// After: Sequential memory access
+std::vector<std::vector<std::pair<std::string, std::string>>> samples_;
+```
 
 ---
 
-### 2.2 Fast Integer Parsing (Expected: 2-3x improvement)
+### 🔥 NEXT: Phase 2 - Eliminate Remaining Allocations
 
-**Problem:** `std::stoi()` is slow (handles locales, exceptions, edge cases)
+#### 2.5 Indexed Sample Format (Expected: 27% gain, 2 hours)
 
-**Solution:** Custom integer parser
+**Problem:** Format field keys duplicated for every sample
 ```cpp
-inline int parse_int_fast(const char* str, size_t len) noexcept {
-    int result = 0;
-    size_t i = 0;
-    bool negative = false;
-    
-    if (len > 0 && str[0] == '-') {
-        negative = true;
-        i = 1;
-    }
-    
-    for (; i < len && str[i] >= '0' && str[i] <= '9'; ++i) {
-        result = result * 10 + (str[i] - '0');
-    }
-    
-    return negative ? -result : result;
-}
-
-// For quality scores (float)
-inline double parse_double_fast(const char* str, size_t len) noexcept;
+// Current: "GT" stored 3,202 times per record!
+samples_[0] = {{"GT", "0/1"}, {"DP", "50"}, {"GQ", "99"}};
+samples_[1] = {{"GT", "1/1"}, {"DP", "45"}, {"GQ", "95"}};  // "GT", "DP", "GQ" duplicated
+// ... 3,200 more times
 ```
 
-**Expected Impact:** 2-3x on position/quality parsing
+**Solution:** Store format fields once per record
+```cpp
+class record {
+    std::vector<std::string> format_fields_;  // Once: ["GT", "DP", "GQ"]
+    std::vector<std::vector<std::string>> sample_values_;  // Just values
+    
+    // Accessor by field name
+    std::string get_sample_value(size_t sample_idx, const std::string& field) const {
+        for (size_t i = 0; i < format_fields_.size(); ++i) {
+            if (format_fields_[i] == field) return sample_values_[sample_idx][i];
+        }
+        return "";
+    }
+};
+```
+
+**Expected Impact:** 401M → 200M allocations, 3,790 → 4,800 rec/s
+
+---
+
+#### 2.6 String_view Sample Values (Expected: 30% gain, 4 hours)
+
+**Problem:** Converting every sample value to std::string
+```cpp
+// Current: Allocates 200M+ strings
+sample_vec.emplace_back(format_fields[i], std::string(value));  // Allocation!
+```
+
+**Solution:** Keep line buffer alive, use string_view
+```cpp
+class record {
+    std::shared_ptr<std::string> line_buffer_;  // Keep source alive
+    std::vector<std::vector<std::string_view>> sample_values_;  // No allocations!
+    
+public:
+    void set_line_buffer(std::shared_ptr<std::string> buffer) {
+        line_buffer_ = buffer;
+    }
+};
+
+// In reader::parse_record()
+auto line_buffer = std::make_shared<std::string>(std::move(line));
+rec.set_line_buffer(line_buffer);
+
+// Parse directly into string_views
+std::vector<std::string_view> values;
+detail::split_view(sample_view, ':', [&](std::string_view v) {
+    values.push_back(v);  // No allocation, points into line_buffer
+});
+```
+
+**Pros**: Zero allocation, cache-friendly  
+**Cons**: Requires buffer lifetime management, can't modify samples in-place  
+**Expected Impact:** 200M → 0 allocations, 4,800 → 6,200 rec/s
+
+---
+
+#### 2.7 Memory Arena Allocator (Expected: 50% gain, 1 day)
+
+**Problem:** Even with string_view for samples, still allocating INFO, fixed fields  
+**Solution:** Bump-pointer allocation from pre-allocated buffer
+```cpp
+class string_arena {
+    std::vector<char> buffer_;
+    size_t offset_ = 0;
+    
+public:
+    string_arena(size_t initial_size = 1024 * 1024) : buffer_(initial_size) {}
+    
+    std::string_view allocate(std::string_view src) {
+        // Grow if needed
+        if (offset_ + src.size() > buffer_.size()) {
+            buffer_.resize(buffer_.size() * 2);
+        }
+        
+        // Copy to arena
+        char* ptr = &buffer_[offset_];
+        std::memcpy(ptr, src.data(), src.size());
+        offset_ += src.size();
+        
+        return {ptr, src.size()};
+    }
+    
+    void reset() { offset_ = 0; }  // Bulk deallocation
+};
+
+class reader {
+    string_arena arena_;
+    
+public:
+    bool parse_record(record& rec) {
+        arena_.reset();  // Reset for this record
+        
+        // Allocate from arena instead of heap
+        rec.set_chrom(arena_.allocate(chrom_view));
+        rec.set_id(arena_.allocate(id_view));
+        // ...
+    }
+};
+```
+
+**Pros**: Fast allocation (just pointer bump), great locality, bulk deallocation  
+**Cons**: Requires per-record or per-batch reset  
+**Expected Impact:** 6,200 → 9,300 rec/s
 
 ---
 
@@ -363,86 +519,109 @@ reader.set_validation(validation_level::basic);  // User choice
 
 ---
 
-## 3. Implementation Roadmap
+## 3. Implementation Roadmap (Updated)
 
-### Phase 1: Foundation (Week 1)
-**Goal:** Establish profiling baseline
+### ✅ Phase 1: Foundation & String Optimization (COMPLETED)
+**Goal:** Establish profiling baseline and eliminate obvious inefficiencies
 
-1. ✅ Run baseline benchmarks
-2. Profile with Instruments/perf
-3. Identify top 3 hotspots
-4. Document findings
+1. ✅ Upgraded to C++17 for std::string_view
+2. ✅ Implemented zero-copy parsing with string_view
+3. ✅ Added fast integer/double parsers
+4. ✅ Enabled -O3 compiler optimization
+5. ✅ Added profiling instrumentation
+6. ✅ Replaced std::map with vector<pair> for samples
 
-**Deliverable:** Profiling report with hotspot analysis
-
----
-
-### Phase 2: String Optimization (Week 2)
-**Goal:** Eliminate string allocations
-
-1. Implement `string_view` wrapper
-2. Rewrite field parsing to use views
-3. Add fast integer/float parsers
-4. Benchmark improvements
-
-**Expected:** 15-20x improvement  
-**Deliverable:** Optimized parsing core
+**Result:** 234 → 3,790 rec/s (16.2x improvement)  
+**Deliverable:** Validated optimizations with 100,356 assertions vs bcftools ✅
 
 ---
 
-### Phase 3: Container Optimization (Week 3)
-**Goal:** Improve data structure performance
+### 🔄 Phase 2: Eliminate Allocations (IN PROGRESS - 1 week)
+**Goal:** Remove remaining 200M+ string allocations
 
-1. Implement flat_map for INFO/FORMAT
-2. Add small_vector for ALT alleles
-3. Optimize sample data storage
-4. Benchmark improvements
+1. ⬜ **Indexed sample format** (2 hours)
+   - Remove format field keys from sample vectors
+   - Store format_fields_ once per record
+   - Update API to access by index or field name
 
-**Expected:** Additional 1.5-2x improvement  
-**Deliverable:** Optimized containers
+2. ⬜ **String_view sample storage** (4 hours)
+   - Add line_buffer_ to record class
+   - Store string_views instead of strings for sample values
+   - Test memory lifetime carefully
 
----
+3. ⬜ **Benchmark and validate** (2 hours)
+   - Run full test suite
+   - Verify 100,356 assertions still pass
+   - Measure performance gain
 
-### Phase 4: I/O Optimization (Week 4)
-**Goal:** Maximize I/O throughput
-
-1. Add large buffer option
-2. Implement memory-mapped file support
-3. Consider parallel parsing
-4. Benchmark improvements
-
-**Expected:** Additional 1.5-2x improvement  
-**Deliverable:** Optimized I/O layer
+**Expected:** 3,790 → 6,200 rec/s (1.6x improvement)  
+**Deliverable:** Near-zero allocation parser
 
 ---
 
-### Phase 5: Polish & Tuning (Week 5)
-**Goal:** Final optimizations
+### 📋 Phase 3: Memory Arena (PLANNED - 3 days)
+**Goal:** Optimize remaining allocations with arena allocator
 
-1. Profile again, find remaining hotspots
-2. Implement micro-optimizations
-3. Add optional validation levels
-4. Final benchmarks
+1. ⬜ Implement string_arena class
+2. ⬜ Integrate with reader for INFO/fixed fields  
+3. ⬜ Add per-record or per-batch reset
+4. ⬜ Benchmark and tune arena size
 
-**Expected:** Additional 1.2-1.5x improvement  
-**Deliverable:** Production-ready optimized parser
+**Expected:** 6,200 → 9,300 rec/s (1.5x improvement)  
+**Deliverable:** Production-ready high-performance parser
 
 ---
 
-## 4. Expected Final Performance
+### 📋 Phase 4: Advanced Features (FUTURE - 1-2 weeks)
 
-**Conservative Estimate:**
-- Phase 2 (strings): 15x → **3,510 records/sec**
-- Phase 3 (containers): 1.5x → **5,265 records/sec**
-- Phase 4 (I/O): 1.5x → **7,898 records/sec**
-- Phase 5 (polish): 1.2x → **9,478 records/sec**
+1. ⬜ **Lazy sample parsing** (20-30% for filtered queries)
+   - Don't parse samples unless accessed
+   - Useful for queries that only need metadata
 
-**Final:** ~9,500 records/sec (**1.25x slower than bcftools**)  
-✅ **Exceeds 2-3x target!**
+2. ⬜ **Parallel parsing** (3-4x on multi-core)
+   - Parse records in parallel batches
+   - OpenMP or std::thread implementation
 
-**Optimistic Estimate:**
-- Phases combined could reach 25-30x improvement
-- **~7,000-9,000 records/sec range likely**
+3. ⬜ **BCF binary format reader**
+   - Match bcftools directly
+   - Requires BGZF decompression
+
+**Expected:** 9,300 → 30,000+ rec/s (parallel) or match bcftools (BCF)  
+**Deliverable:** Feature-complete high-performance library
+
+---
+
+## 4. Expected Performance Trajectory
+
+**Actual Progress:**
+```
+Phase 1 Complete:
+  Baseline:          234 rec/s  ██░░░░░░░░░░░░░░░░░░░░ 2.0%
+  + string_view:     441 rec/s  ███░░░░░░░░░░░░░░░░░░░ 3.8%
+  + O3:            3,440 rec/s  ████████████████████░░░ 29.6%
+  + vector:        3,790 rec/s  ██████████████████████░ 32.6%
+```
+
+**Projected Next Steps:**
+```
+Phase 2: Zero Allocation
+  + Indexed:      ~4,800 rec/s  ████████████████████████░ 41.3%
+  + String_view:  ~6,200 rec/s  ███████████████████████████░ 53.4%
+
+Phase 3: Memory Arena  
+  + Arena:        ~9,300 rec/s  ████████████████████████████████░ 80.1%
+
+Phase 4: Advanced
+  + Parallel:    ~30,000 rec/s  ██████████████████████████████████████████ 258%
+  
+bcftools baseline: 11,611 rec/s  ████████████████████████████████████ 100%
+```
+
+**Key Milestones:**
+- ✅ **16.2x from baseline** (234 → 3,790 rec/s)
+- ⏭️ **Within 2x of bcftools** (~6,200 rec/s with indexed + string_view)
+- 🎯 **Match bcftools** (~9,300 rec/s with arena, or BCF support)
+- 🚀 **Exceed bcftools** (~30,000 rec/s with parallel parsing)
 
 ---
 
@@ -548,25 +727,54 @@ template<> class record_parser<validation_level::strict> {
 
 ## 8. Monitoring & Metrics
 
-### Performance Dashboard
+### Performance Dashboard (Updated Jan 2026)
 
 ```
-Current Status: Phase 1 (Baseline)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+═══════════════════════════════════════════════════════════
+             VCF PARSER PERFORMANCE STATUS
+═══════════════════════════════════════════════════════════
 
-Parse Speed:        234 rec/sec  [████░░░░░░░░░░░░░░░░] 2.0%
-Target (2x):      5,913 rec/sec
-Target (3x):      3,942 rec/sec
-bcftools:        11,826 rec/sec
+Parse Speed:      3,790 rec/sec  ██████████████████████░░ 32.6%
+Target (2x):      5,805 rec/sec  ███████████████████████░ 50.0%
+Target (1.2x):    9,675 rec/sec  ████████████████████████ 83.3%
+bcftools:        11,611 rec/sec  ████████████████████████ 100%
 
-Memory Usage:     ~1.2 MB/1000 records
-Validation:       ✅ 100% match with bcftools
-Test Coverage:    ✅ 100,356 assertions passing
+Progress:         16.2x from baseline ✅
+Gap to bcftools:  3.1x (down from 50x!)
+Phase:            Phase 1 Complete, Phase 2 Next
+
+Allocations:      ~32,000 per record
+Next Goal:        Reduce to near-zero
+
+Memory Usage:     ~13.9 KB/record
+Validation:       ✅ 100% match (100,356 assertions)
+Test Coverage:    ✅ All tests passing
+
+Recent Optimizations:
+  ✅ C++17 upgrade (string_view support)
+  ✅ Zero-copy field parsing
+  ✅ Fast integer/double parsers
+  ✅ -O3 compiler optimization (7.8x gain!)
+  ✅ Vector-based sample storage (1.1x gain)
+
+Next Up:
+  ⏭️ Indexed sample format (27% projected)
+  ⏭️ String_view sample storage (30% projected)
+═══════════════════════════════════════════════════════════
 ```
 
-### Update After Each Phase
+### Allocation Tracking
 
-Track progress toward target with each optimization phase.
+```
+Current allocations per record: ~32,070
+  - Fixed fields:     ~10
+  - INFO fields:      ~30
+  - Format fields:    ~10
+  - Sample values:    ~32,020  ← 99.8% of allocations!
+
+After indexed format: ~12,010 (62.5% reduction)
+After string_view:    ~10-20 (99.9% reduction)
+```
 
 ---
 
