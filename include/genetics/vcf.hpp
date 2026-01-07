@@ -12,6 +12,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <cstddef>
+#include <genetics/vcf_phase2.hpp>
 
 namespace boost {
 namespace genetics {
@@ -97,6 +98,41 @@ public:
     /// @brief Add a sample with genotype data
     void add_sample(const std::map<std::string, std::string>& sample_data) {
         samples_.push_back(sample_data);
+    }
+
+    /// @brief Phase 2: Validate against metadata
+    /// @param info_meta INFO metadata from header
+    /// @return true if INFO fields are valid
+    bool validate_info(const std::map<std::string, info_meta>& info_meta) const {
+        for (std::map<std::string, std::string>::const_iterator it = info_.begin();
+             it != info_.end(); ++it) {
+            // Check if INFO key is defined
+            if (info_meta.find(it->first) == info_meta.end()) {
+                return false; // Undefined INFO key
+            }
+        }
+        return true;
+    }
+
+    /// @brief Check if this is a SNP
+    bool is_snp() const {
+        if (ref_.length() != 1) return false;
+        for (std::size_t i = 0; i < alt_.size(); ++i) {
+            if (alt_[i].length() != 1) return false;
+        }
+        return true;
+    }
+
+    /// @brief Check if this is an insertion
+    bool is_insertion() const {
+        if (alt_.empty()) return false;
+        return ref_.length() < alt_[0].length();
+    }
+
+    /// @brief Check if this is a deletion
+    bool is_deletion() const {
+        if (alt_.empty()) return false;
+        return ref_.length() > alt_[0].length();
     }
 
     /// @brief Convert record to VCF line format
@@ -235,6 +271,21 @@ public:
     /// @brief Get sample names
     const std::vector<std::string>& sample_names() const { return sample_names_; }
 
+    /// @brief Get INFO metadata definitions
+    const std::map<std::string, info_meta>& info_metadata() const { return info_defs_; }
+
+    /// @brief Get FORMAT metadata definitions
+    const std::map<std::string, format_meta>& format_metadata() const { return format_defs_; }
+
+    /// @brief Get FILTER metadata definitions
+    const std::map<std::string, filter_meta>& filter_metadata() const { return filter_defs_; }
+
+    /// @brief Get contig metadata definitions
+    const std::map<std::string, contig_meta>& contig_metadata() const { return contig_defs_; }
+
+    /// @brief Get ALT metadata definitions
+    const std::map<std::string, alt_meta>& alt_metadata() const { return alt_defs_; }
+
     /// @brief Read next record
     /// @param rec Record to populate
     /// @return true if record was read, false if end of file
@@ -271,6 +322,13 @@ private:
     std::string version_;
     std::vector<std::string> header_lines_;
     std::vector<std::string> sample_names_;
+    
+    // Phase 2: Structured metadata
+    std::map<std::string, info_meta> info_defs_;
+    std::map<std::string, format_meta> format_defs_;
+    std::map<std::string, filter_meta> filter_defs_;
+    std::map<std::string, contig_meta> contig_defs_;
+    std::map<std::string, alt_meta> alt_defs_;
 
     void read_header() {
         std::string line;
@@ -285,6 +343,23 @@ private:
                 // Extract version
                 if (line.compare(0, 13, "##fileformat=") == 0) {
                     version_ = line.substr(13);
+                }
+                
+                // Phase 2: Parse structured metadata
+                else if (line.compare(0, 7, "##INFO=") == 0) {
+                    parse_info_header(line.substr(7));
+                }
+                else if (line.compare(0, 9, "##FORMAT=") == 0) {
+                    parse_format_header(line.substr(9));
+                }
+                else if (line.compare(0, 9, "##FILTER=") == 0) {
+                    parse_filter_header(line.substr(9));
+                }
+                else if (line.compare(0, 9, "##contig=") == 0) {
+                    parse_contig_header(line.substr(9));
+                }
+                else if (line.compare(0, 6, "##ALT=") == 0) {
+                    parse_alt_header(line.substr(6));
                 }
                 
                 // Extract sample names from column header line
@@ -307,6 +382,84 @@ private:
                 --line_number_;
                 break;
             }
+        }
+    }
+
+    void parse_info_header(const std::string& content) {
+        std::map<std::string, std::string> fields = parse_structured_header(content);
+        if (fields.find("ID") != fields.end()) {
+            info_meta meta;
+            meta.id = fields["ID"];
+            meta.number = fields.count("Number") ? fields["Number"] : ".";
+            meta.type = fields.count("Type") ? fields["Type"] : "String";
+            meta.description = fields.count("Description") ? fields["Description"] : "";
+            // Store any extra fields
+            for (std::map<std::string, std::string>::const_iterator it = fields.begin();
+                 it != fields.end(); ++it) {
+                if (it->first != "ID" && it->first != "Number" && 
+                    it->first != "Type" && it->first != "Description") {
+                    meta.extra[it->first] = it->second;
+                }
+            }
+            info_defs_[meta.id] = meta;
+        }
+    }
+
+    void parse_format_header(const std::string& content) {
+        std::map<std::string, std::string> fields = parse_structured_header(content);
+        if (fields.find("ID") != fields.end()) {
+            format_meta meta;
+            meta.id = fields["ID"];
+            meta.number = fields.count("Number") ? fields["Number"] : ".";
+            meta.type = fields.count("Type") ? fields["Type"] : "String";
+            meta.description = fields.count("Description") ? fields["Description"] : "";
+            for (std::map<std::string, std::string>::const_iterator it = fields.begin();
+                 it != fields.end(); ++it) {
+                if (it->first != "ID" && it->first != "Number" && 
+                    it->first != "Type" && it->first != "Description") {
+                    meta.extra[it->first] = it->second;
+                }
+            }
+            format_defs_[meta.id] = meta;
+        }
+    }
+
+    void parse_filter_header(const std::string& content) {
+        std::map<std::string, std::string> fields = parse_structured_header(content);
+        if (fields.find("ID") != fields.end()) {
+            filter_meta meta;
+            meta.id = fields["ID"];
+            meta.description = fields.count("Description") ? fields["Description"] : "";
+            filter_defs_[meta.id] = meta;
+        }
+    }
+
+    void parse_contig_header(const std::string& content) {
+        std::map<std::string, std::string> fields = parse_structured_header(content);
+        if (fields.find("ID") != fields.end()) {
+            contig_meta meta;
+            meta.id = fields["ID"];
+            if (fields.count("length")) {
+                std::istringstream iss(fields["length"]);
+                iss >> meta.length;
+            }
+            for (std::map<std::string, std::string>::const_iterator it = fields.begin();
+                 it != fields.end(); ++it) {
+                if (it->first != "ID" && it->first != "length") {
+                    meta.extra[it->first] = it->second;
+                }
+            }
+            contig_defs_[meta.id] = meta;
+        }
+    }
+
+    void parse_alt_header(const std::string& content) {
+        std::map<std::string, std::string> fields = parse_structured_header(content);
+        if (fields.find("ID") != fields.end()) {
+            alt_meta meta;
+            meta.id = fields["ID"];
+            meta.description = fields.count("Description") ? fields["Description"] : "";
+            alt_defs_[meta.id] = meta;
         }
     }
 

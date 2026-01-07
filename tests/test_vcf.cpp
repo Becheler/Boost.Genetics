@@ -390,3 +390,155 @@ TEST_CASE("VCF multiple ALT alleles", "[vcf]") {
     
     std::remove(test_file.c_str());
 }
+
+TEST_CASE("VCF Phase 2: Percent encoding/decoding", "[vcf][phase2]") {
+    SECTION("Encode special characters") {
+        std::string original = "value with spaces";
+        std::string encoded = vcf::percent_encoding::encode(original);
+        REQUIRE(encoded.find("%20") != std::string::npos);
+        
+        std::string decoded = vcf::percent_encoding::decode(encoded);
+        REQUIRE(decoded == original);
+    }
+    
+    SECTION("Encode semicolon and equals") {
+        std::string original = "key=value;other";
+        std::string encoded = vcf::percent_encoding::encode(original);
+        REQUIRE(encoded.find("%3D") != std::string::npos); // =
+        REQUIRE(encoded.find("%3B") != std::string::npos); // ;
+        
+        std::string decoded = vcf::percent_encoding::decode(encoded);
+        REQUIRE(decoded == original);
+    }
+}
+
+TEST_CASE("VCF Phase 2: Parse structured headers", "[vcf][phase2]") {
+    SECTION("Parse INFO header") {
+        std::string content = "<ID=DP,Number=1,Type=Integer,Description=\"Total Depth\">";
+        std::map<std::string, std::string> fields = vcf::parse_structured_header(content);
+        
+        REQUIRE(fields["ID"] == "DP");
+        REQUIRE(fields["Number"] == "1");
+        REQUIRE(fields["Type"] == "Integer");
+        REQUIRE(fields["Description"] == "Total Depth");
+    }
+    
+    SECTION("Parse contig header with length") {
+        std::string content = "<ID=chr1,length=248956422>";
+        std::map<std::string, std::string> fields = vcf::parse_structured_header(content);
+        
+        REQUIRE(fields["ID"] == "chr1");
+        REQUIRE(fields["length"] == "248956422");
+    }
+}
+
+TEST_CASE("VCF Phase 2: Reader parses metadata", "[vcf][phase2]") {
+    const std::string test_file = "test_metadata.vcf";
+    
+    {
+        std::ofstream out(test_file.c_str());
+        out << "##fileformat=VCFv4.3\n";
+        out << "##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Total Depth\">\n";
+        out << "##INFO=<ID=AF,Number=A,Type=Float,Description=\"Allele Frequency\">\n";
+        out << "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n";
+        out << "##FORMAT=<ID=GQ,Number=1,Type=Integer,Description=\"Genotype Quality\">\n";
+        out << "##FILTER=<ID=q10,Description=\"Quality below 10\">\n";
+        out << "##contig=<ID=chr1,length=248956422>\n";
+        out << "##contig=<ID=chr2,length=242193529>\n";
+        out << "##ALT=<ID=DEL,Description=\"Deletion\">\n";
+        out << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n";
+        out << "chr1\t100\t.\tA\tG\t30\tPASS\tDP=50;AF=0.5\n";
+        out.close();
+    }
+    
+    vcf::reader reader(test_file);
+    
+    SECTION("INFO metadata parsed") {
+        const std::map<std::string, vcf::info_meta>& info_meta = reader.info_metadata();
+        REQUIRE(info_meta.size() == 2);
+        
+        REQUIRE(info_meta.count("DP") == 1);
+        REQUIRE(info_meta.at("DP").id == "DP");
+        REQUIRE(info_meta.at("DP").number == "1");
+        REQUIRE(info_meta.at("DP").type == "Integer");
+        REQUIRE(info_meta.at("DP").description == "Total Depth");
+        
+        REQUIRE(info_meta.count("AF") == 1);
+        REQUIRE(info_meta.at("AF").number == "A");
+        REQUIRE(info_meta.at("AF").type == "Float");
+    }
+    
+    SECTION("FORMAT metadata parsed") {
+        const std::map<std::string, vcf::format_meta>& format_meta = reader.format_metadata();
+        REQUIRE(format_meta.size() == 2);
+        
+        REQUIRE(format_meta.count("GT") == 1);
+        REQUIRE(format_meta.at("GT").id == "GT");
+        REQUIRE(format_meta.at("GT").type == "String");
+        
+        REQUIRE(format_meta.count("GQ") == 1);
+    }
+    
+    SECTION("FILTER metadata parsed") {
+        const std::map<std::string, vcf::filter_meta>& filter_meta = reader.filter_metadata();
+        REQUIRE(filter_meta.size() == 1);
+        
+        REQUIRE(filter_meta.count("q10") == 1);
+        REQUIRE(filter_meta.at("q10").description == "Quality below 10");
+    }
+    
+    SECTION("Contig metadata parsed") {
+        const std::map<std::string, vcf::contig_meta>& contig_meta = reader.contig_metadata();
+        REQUIRE(contig_meta.size() == 2);
+        
+        REQUIRE(contig_meta.count("chr1") == 1);
+        REQUIRE(contig_meta.at("chr1").length == 248956422);
+        
+        REQUIRE(contig_meta.count("chr2") == 1);
+        REQUIRE(contig_meta.at("chr2").length == 242193529);
+    }
+    
+    SECTION("ALT metadata parsed") {
+        const std::map<std::string, vcf::alt_meta>& alt_meta = reader.alt_metadata();
+        REQUIRE(alt_meta.size() == 1);
+        
+        REQUIRE(alt_meta.count("DEL") == 1);
+        REQUIRE(alt_meta.at("DEL").description == "Deletion");
+    }
+    
+    std::remove(test_file.c_str());
+}
+
+TEST_CASE("VCF Phase 2: Record validation", "[vcf][phase2]") {
+    const std::string test_file = "test_validate.vcf";
+    
+    {
+        std::ofstream out(test_file.c_str());
+        out << "##fileformat=VCFv4.3\n";
+        out << "##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Depth\">\n";
+        out << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n";
+        out << "chr1\t100\t.\tA\tG\t30\tPASS\tDP=50\n";
+        out.close();
+    }
+    
+    vcf::reader reader(test_file);
+    vcf::record rec;
+    REQUIRE(reader.read_record(rec));
+    
+    SECTION("Valid INFO validates successfully") {
+        REQUIRE(rec.validate_info(reader.info_metadata()));
+    }
+    
+    SECTION("Invalid INFO fails validation") {
+        rec.add_info("UNDEFINED_KEY", "value");
+        REQUIRE_FALSE(rec.validate_info(reader.info_metadata()));
+    }
+    
+    SECTION("Variant type detection") {
+        REQUIRE(rec.is_snp());
+        REQUIRE_FALSE(rec.is_insertion());
+        REQUIRE_FALSE(rec.is_deletion());
+    }
+    
+    std::remove(test_file.c_str());
+}

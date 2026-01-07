@@ -13,12 +13,21 @@ A lightweight, header-only C++ library for working with VCF (Variant Call Format
 ## VCF Support
 
 Complete implementation of the Variant Call Format specification (VCFv4.3):
+
+### Phase 1 (Complete)
 - **VCF file reading and writing**
 - **Full header metadata support**: INFO, FORMAT, FILTER, contig definitions
 - **Sample genotype data handling**: Multiple samples with arbitrary FORMAT fields
 - **Standard-compliant parsing**: SNPs, insertions, deletions, and complex variants
 - **Error handling**: Custom exceptions with line number context
 - **Missing value support**: Proper handling of `.` values
+
+### Phase 2 (Complete) 
+- **Structured metadata parsing**: Parse ##INFO, ##FORMAT, ##FILTER, ##contig, ##ALT headers into typed structures
+- **Percent encoding/decoding**: Full support for encoding special characters in INFO/FORMAT fields
+- **Record validation**: Validate INFO fields against header metadata
+- **Variant type detection**: Methods to identify SNPs, insertions, deletions
+- **Comprehensive metadata access**: Retrieve parsed header definitions programmatically
 
 ## Quick Start
 
@@ -170,10 +179,10 @@ This is a prototype candidate library for Boost. Contributions are welcome!
 
 ## Roadmap
 
-- ✅ **VCFv4.3 text format** - Fully implemented
-- 🔄 **Phase 2 validation** - Type-safe INFO/FORMAT parsing
-- 📋 **Structural variants** - Support for `<DEL>`, `<INS>`, breakends
-- 📋 **gVCF support** - Reference blocks with `<*>` allele
-- 📋 **BCF binary format** - Binary compressed VCF
-- 📋 **BGZF compression** - Block compression support
-- 📋 **Tabix indexing** - Random access by genomic region
+- ✅ **Phase 1: VCFv4.3 text format** - Core reader/writer
+- ✅ **Phase 2: Extended features** - Metadata parsing, validation, percent encoding
+- 📋 **Phase 3: Structural variants** - Support for `<DEL>`, `<INS>`, breakends
+- 📋 **Phase 4: gVCF support** - Reference blocks with `<*>` allele
+- 📋 **Phase 5: BCF binary format** - Binary compressed VCF
+- 📋 **Phase 6: BGZF compression** - Block compression support
+- 📋 **Phase 7: Tabix indexing** - Random access by genomic region
