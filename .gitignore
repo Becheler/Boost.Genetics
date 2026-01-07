@@ -76,3 +76,5 @@ variant_example
 Testing/
 CTestTestfile.cmake
 
+tests/data/reference/*.vcf.gz*
+tests/data/reference/*.vcf

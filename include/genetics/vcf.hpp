@@ -6,20 +6,119 @@
 #define BOOST_GENETICS_VCF_HPP
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <map>
 #include <sstream>
 #include <fstream>
 #include <stdexcept>
 #include <cstddef>
-#include <genetics/vcf_phase2.hpp>
-#include <genetics/vcf_phase3.hpp>
-#include <genetics/vcf_phase4.hpp>
+#include <cstdlib>
+#include <cstring>
+#include <cctype>
+#include <genetics/vcf_gvcf.hpp>
+#include <genetics/vcf_metadata.hpp>
+#include <genetics/vcf_structural_variants.hpp>
 #include <genetics/vcf_validation.hpp>
 
 namespace boost {
 namespace genetics {
 namespace vcf {
+
+// ============================================================================
+// FAST PARSING UTILITIES
+// ============================================================================
+
+namespace detail {
+
+/// @brief Fast integer parsing from string_view (avoids std::stoi overhead)
+inline std::size_t parse_uint_fast(std::string_view str) noexcept {
+    std::size_t result = 0;
+    for (char c : str) {
+        if (c >= '0' && c <= '9') {
+            result = result * 10 + (c - '0');
+        } else {
+            break;
+        }
+    }
+    return result;
+}
+
+/// @brief Fast double parsing from string_view (fallback to strtod)
+inline double parse_double_fast(std::string_view str) noexcept {
+    // std::from_chars for floating point is not universally available in C++17
+    // Use fast strtod approach instead
+    if (str.empty()) return 0.0;
+    
+    // Create null-terminated string on stack for small strings (SSO optimization)
+    char buffer[32];
+    if (str.size() < sizeof(buffer)) {
+        std::memcpy(buffer, str.data(), str.size());
+        buffer[str.size()] = '\0';
+        return std::strtod(buffer, nullptr);
+    }
+    
+    // Fallback for larger strings (rare)
+    std::string temp(str);
+    return std::strtod(temp.c_str(), nullptr);
+}
+
+/// @brief Split string_view by delimiter, calling callback for each field
+template<typename Func>
+inline void split_view(std::string_view str, char delim, Func callback) {
+    std::size_t start = 0;
+    std::size_t pos = str.find(delim);
+    
+    while (pos != std::string_view::npos) {
+        callback(str.substr(start, pos - start));
+        start = pos + 1;
+        pos = str.find(delim, start);
+    }
+    
+    // Last field
+    if (start < str.size()) {
+        callback(str.substr(start));
+    } else if (start == str.size()) {
+        callback(std::string_view());
+    }
+}
+
+/// @brief Extract tab-separated fields from a line (zero-copy)
+struct field_extractor {
+    std::string_view line;
+    std::size_t pos = 0;
+    
+    explicit field_extractor(std::string_view l) : line(l) {}
+    
+    std::string_view next() {
+        if (pos >= line.size()) {
+            return std::string_view();
+        }
+        
+        std::size_t tab_pos = line.find('\t', pos);
+        std::string_view result;
+        
+        if (tab_pos == std::string_view::npos) {
+            result = line.substr(pos);
+            pos = line.size();
+        } else {
+            result = line.substr(pos, tab_pos - pos);
+            pos = tab_pos + 1;
+        }
+        
+        return result;
+    }
+    
+    bool has_more() const {
+        return pos < line.size();
+    }
+};
+
+} // namespace detail
+
+// ============================================================================
+// VCF RECORD CLASS
+// ============================================================================
 
 /// @brief VCF parsing exception with line context
 class vcf_parse_error : public std::runtime_error {
@@ -654,82 +753,93 @@ private:
     }
 
     bool parse_record(const std::string& line, record& rec) {
-        std::istringstream iss(line);
-        std::string chrom, id, ref, alt_str, qual_str, filter, info_str;
-        std::size_t pos;
+        // Use zero-copy parsing with string_view
+        std::string_view line_view(line);
+        detail::field_extractor fields(line_view);
         
-        // Parse required fields
-        if (!(iss >> chrom >> pos >> id >> ref >> alt_str >> qual_str >> filter >> info_str)) {
+        // Extract required fields (zero-copy)
+        std::string_view chrom_view = fields.next();
+        std::string_view pos_view = fields.next();
+        std::string_view id_view = fields.next();
+        std::string_view ref_view = fields.next();
+        std::string_view alt_view = fields.next();
+        std::string_view qual_view = fields.next();
+        std::string_view filter_view = fields.next();
+        std::string_view info_view = fields.next();
+        
+        // Validate we got all 8 required fields (check for empty or missing fields)
+        if (chrom_view.empty() || pos_view.empty() || id_view.empty() || 
+            ref_view.empty() || alt_view.empty() || qual_view.empty() || 
+            filter_view.empty() || info_view.empty()) {
             throw vcf_parse_error("Invalid VCF record: expected 8 fixed fields", line_number_);
         }
         
-        // Set basic fields
-        rec.set_chrom(chrom);
-        rec.set_pos(pos);
-        rec.set_id(id == "." ? "" : id);
-        rec.set_ref(ref);
+        // Set basic fields (convert from string_view to string only when storing)
+        rec.set_chrom(std::string(chrom_view));
+        rec.set_pos(detail::parse_uint_fast(pos_view));
+        rec.set_id(id_view == "." ? "" : std::string(id_view));
+        rec.set_ref(std::string(ref_view));
         
-        // Parse ALT alleles
+        // Parse ALT alleles (zero-copy split, then convert to strings)
         std::vector<std::string> alt_alleles;
-        if (alt_str != ".") {
-            std::istringstream alt_stream(alt_str);
-            std::string allele;
-            while (std::getline(alt_stream, allele, ',')) {
-                alt_alleles.push_back(allele);
-            }
+        if (alt_view != ".") {
+            detail::split_view(alt_view, ',', [&alt_alleles](std::string_view allele) {
+                alt_alleles.emplace_back(allele);
+            });
         }
         rec.set_alt(alt_alleles);
         
-        // Parse QUAL
-        if (qual_str != ".") {
-            rec.set_qual(std::atof(qual_str.c_str()));
+        // Parse QUAL (fast conversion)
+        if (qual_view != ".") {
+            rec.set_qual(detail::parse_double_fast(qual_view));
         } else {
             rec.set_qual(0.0);
         }
         
         // Set FILTER
-        rec.set_filter(filter == "." ? "" : filter);
+        rec.set_filter(filter_view == "." ? "" : std::string(filter_view));
         
-        // Parse INFO
+        // Parse INFO (zero-copy split, then store as strings)
         std::map<std::string, std::string> info_map;
-        if (info_str != ".") {
-            std::istringstream info_stream(info_str);
-            std::string info_field;
-            while (std::getline(info_stream, info_field, ';')) {
+        if (info_view != ".") {
+            detail::split_view(info_view, ';', [&info_map](std::string_view info_field) {
                 std::size_t eq_pos = info_field.find('=');
-                if (eq_pos != std::string::npos) {
-                    info_map[info_field.substr(0, eq_pos)] = info_field.substr(eq_pos + 1);
+                if (eq_pos != std::string_view::npos) {
+                    info_map[std::string(info_field.substr(0, eq_pos))] = 
+                        std::string(info_field.substr(eq_pos + 1));
                 } else {
-                    info_map[info_field] = "";
+                    info_map[std::string(info_field)] = "";
                 }
-            }
+            });
         }
         rec.set_info(info_map);
         
         // Parse FORMAT and sample data if present
-        std::string format;
-        if (iss >> format) {
-            rec.set_format(format);
+        if (fields.has_more()) {
+            std::string_view format_view = fields.next();
+            rec.set_format(std::string(format_view));
             
+            // Extract format field names
             std::vector<std::string> format_fields;
-            std::istringstream format_stream(format);
-            std::string field;
-            while (std::getline(format_stream, field, ':')) {
-                format_fields.push_back(field);
-            }
+            detail::split_view(format_view, ':', [&format_fields](std::string_view field) {
+                format_fields.emplace_back(field);
+            });
             
+            // Parse each sample
             std::vector<std::map<std::string, std::string>> samples;
-            std::string sample_data;
-            while (iss >> sample_data) {
+            while (fields.has_more()) {
+                std::string_view sample_view = fields.next();
                 std::map<std::string, std::string> sample_map;
-                std::istringstream sample_stream(sample_data);
-                std::string value;
+                
                 std::size_t field_idx = 0;
-                while (std::getline(sample_stream, value, ':') && field_idx < format_fields.size()) {
-                    sample_map[format_fields[field_idx]] = value;
-                    ++field_idx;
-                }
-                samples.push_back(sample_map);
+                detail::split_view(sample_view, ':', [&](std::string_view value) {
+                    if (field_idx < format_fields.size()) {
+                        sample_map[format_fields[field_idx]] = std::string(value);
+                        ++field_idx;
+                    }
+                });
+                
+                samples.push_back(std::move(sample_map));
             }
             rec.set_samples(samples);
         }

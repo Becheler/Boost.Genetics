@@ -1,5 +1,5 @@
-#ifndef BOOST_GENETICS_VCF_PHASE4_HPP
-#define BOOST_GENETICS_VCF_PHASE4_HPP
+#ifndef BOOST_GENETICS_VCF_GVCF_HPP
+#define BOOST_GENETICS_VCF_GVCF_HPP
 
 #include <string>
 #include <map>
@@ -167,4 +167,4 @@ const char* gvcf_info_keys::END = "END";
 } // namespace genetics
 } // namespace boost
 
-#endif // BOOST_GENETICS_VCF_PHASE4_HPP
+#endif // BOOST_GENETICS_VCF_GVCF_HPP

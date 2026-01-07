@@ -2,8 +2,8 @@
 //  Distributed under the Boost Software License, Version 1.0.
 //  (See accompanying file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef BOOST_GENETICS_VCF_PHASE2_HPP
-#define BOOST_GENETICS_VCF_PHASE2_HPP
+#ifndef BOOST_GENETICS_VCF_METADATA_HPP
+#define BOOST_GENETICS_VCF_METADATA_HPP
 
 #include <string>
 #include <map>
@@ -176,4 +176,4 @@ inline std::map<std::string, std::string> parse_structured_header(const std::str
 } // namespace genetics
 } // namespace boost
 
-#endif // BOOST_GENETICS_VCF_PHASE2_HPP
+#endif // BOOST_GENETICS_VCF_METADATA_HPP

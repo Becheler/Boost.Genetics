@@ -1,5 +1,5 @@
-#ifndef BOOST_GENETICS_VCF_PHASE3_HPP
-#define BOOST_GENETICS_VCF_PHASE3_HPP
+#ifndef BOOST_GENETICS_VCF_STRUCTURAL_VARIANTS_HPP
+#define BOOST_GENETICS_VCF_STRUCTURAL_VARIANTS_HPP
 
 #include <string>
 #include <map>
@@ -285,4 +285,4 @@ inline sv_type detect_sv_type(const std::string& alt, const std::string& info_st
 } // namespace genetics
 } // namespace boost
 
-#endif // BOOST_GENETICS_VCF_PHASE3_HPP
+#endif // BOOST_GENETICS_VCF_STRUCTURAL_VARIANTS_HPP
