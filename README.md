@@ -5,7 +5,7 @@ A lightweight, header-only C++ library for genetics datasets, inspired by Boost.
 ## Features
 
 - **Header-only**: No compilation required, just include and use
-- **Lightweight**: No heavy dependencies (no Boost.Drone)
+- **Lightweight**: Minimal dependencies, no heavy tooling required
 - **Modular design**: Clear separation of concerns
 - **Modern C++**: C++11 standard
 - **Well-tested**: Comprehensive test suite using Catch2

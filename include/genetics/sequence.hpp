@@ -105,9 +105,12 @@ private:
                 break;
         }
         
-        for (char c : data_) {
-            if (valid_chars && std::string(valid_chars).find(c) == std::string::npos) {
-                throw std::invalid_argument("Invalid character in sequence");
+        if (valid_chars) {
+            std::string valid_set(valid_chars);
+            for (char c : data_) {
+                if (valid_set.find(c) == std::string::npos) {
+                    throw std::invalid_argument("Invalid character in sequence");
+                }
             }
         }
     }
