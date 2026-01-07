@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <genetics/vcf_phase2.hpp>
 #include <genetics/vcf_phase3.hpp>
+#include <genetics/vcf_phase4.hpp>
 
 namespace boost {
 namespace genetics {
@@ -189,6 +190,56 @@ public:
     bool is_imprecise() const {
         sv_info sv = get_sv_info();
         return sv.imprecise;
+    }
+
+    // ========================================================================
+    // PHASE 4: gVCF METHODS
+    // ========================================================================
+
+    /// @brief Check if this record contains <*> allele (NON_REF)
+    bool has_non_ref_allele() const {
+        return vcf::has_non_ref_allele(alt_);
+    }
+
+    /// @brief Check if this is a pure reference block (only <*>)
+    bool is_reference_block() const {
+        return is_pure_reference_block(alt_);
+    }
+
+    /// @brief Parse reference block information from first sample
+    /// @return reference_block structure with END, MIN_DP, GQ, DP, GT
+    reference_block get_reference_block() const {
+        std::string info_str = get_info_string();
+        std::map<std::string, std::string> sample_data;
+        if (!samples_.empty()) {
+            sample_data = samples_[0];
+        }
+        return parse_reference_block(static_cast<int>(pos_), info_str, sample_data);
+    }
+
+    /// @brief Get reference block for a specific sample
+    /// @param sample_idx Sample index (0-based)
+    /// @return reference_block structure
+    reference_block get_reference_block(std::size_t sample_idx) const {
+        std::string info_str = get_info_string();
+        std::map<std::string, std::string> sample_data;
+        if (sample_idx < samples_.size()) {
+            sample_data = samples_[sample_idx];
+        }
+        return parse_reference_block(static_cast<int>(pos_), info_str, sample_data);
+    }
+
+    /// @brief Validate reference block consistency
+    bool validate_reference_block() const {
+        reference_block block = get_reference_block();
+        return vcf::validate_reference_block(block);
+    }
+
+    /// @brief Get block length (END - POS + 1, or 1 if no END)
+    int get_block_length() const {
+        int end = get_end_pos();
+        if (end <= 0) return 1;
+        return end - static_cast<int>(pos_) + 1;
     }
 
     /// @brief Convert record to VCF line format

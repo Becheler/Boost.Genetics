@@ -780,3 +780,251 @@ TEST_CASE("Multiple SV types", "[vcf][phase3]") {
         REQUIRE(vcf::sv_type_to_string(vcf::sv_type::UNKNOWN) == "UNKNOWN");
     }
 }
+
+// ============================================================================
+// PHASE 4: gVCF REFERENCE BLOCK TESTS
+// ============================================================================
+
+TEST_CASE("NON_REF allele detection", "[vcf][phase4]") {
+    SECTION("<*> is NON_REF allele") {
+        REQUIRE(vcf::is_non_ref_allele("<*>"));
+    }
+    
+    SECTION("<NON_REF> is NON_REF allele") {
+        REQUIRE(vcf::is_non_ref_allele("<NON_REF>"));
+    }
+    
+    SECTION("Regular alleles are not NON_REF") {
+        REQUIRE_FALSE(vcf::is_non_ref_allele("A"));
+        REQUIRE_FALSE(vcf::is_non_ref_allele("ATG"));
+        REQUIRE_FALSE(vcf::is_non_ref_allele("<DEL>"));
+    }
+}
+
+TEST_CASE("Pure reference block detection", "[vcf][phase4]") {
+    SECTION("Single <*> allele is pure reference block") {
+        std::vector<std::string> alt;
+        alt.push_back("<*>");
+        REQUIRE(vcf::is_pure_reference_block(alt));
+    }
+    
+    SECTION("Multiple alleles not pure reference block") {
+        std::vector<std::string> alt;
+        alt.push_back("C");
+        alt.push_back("<*>");
+        REQUIRE_FALSE(vcf::is_pure_reference_block(alt));
+    }
+    
+    SECTION("Empty ALT is not reference block") {
+        std::vector<std::string> alt;
+        REQUIRE_FALSE(vcf::is_pure_reference_block(alt));
+    }
+}
+
+TEST_CASE("Simple reference block", "[vcf][phase4]") {
+    const std::string test_file = "test_gvcf_ref_block.vcf";
+    {
+        std::ofstream out(test_file.c_str());
+        out << "##fileformat=VCFv4.3\n";
+        out << "##INFO=<ID=END,Number=1,Type=Integer,Description=\"End position\">\n";
+        out << "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n";
+        out << "##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"Read Depth\">\n";
+        out << "##FORMAT=<ID=GQ,Number=1,Type=Integer,Description=\"Genotype Quality\">\n";
+        out << "##FORMAT=<ID=MIN_DP,Number=1,Type=Integer,Description=\"Minimum DP in block\">\n";
+        out << "##FORMAT=<ID=PL,Number=G,Type=Integer,Description=\"Phred-scaled likelihoods\">\n";
+        out << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSample1\n";
+        out << "chr1\t100\t.\tG\t<*>\t.\t.\tEND=110\tGT:DP:GQ:MIN_DP:PL\t0/0:25:60:23:0,60,900\n";
+        out.close();
+    }
+    
+    vcf::reader reader(test_file);
+    vcf::record rec;
+    REQUIRE(reader.read_record(rec));
+    
+    SECTION("Detect reference block") {
+        REQUIRE(rec.is_reference_block());
+        REQUIRE(rec.has_non_ref_allele());
+    }
+    
+    SECTION("Parse reference block info") {
+        vcf::reference_block block = rec.get_reference_block();
+        REQUIRE(block.start_pos == 100);
+        REQUIRE(block.end_pos == 110);
+        REQUIRE(block.min_depth == 23);
+        REQUIRE(block.genotype_quality == 60);
+        REQUIRE(block.depth == 25);
+        REQUIRE(block.genotype == "0/0");
+    }
+    
+    SECTION("Block length calculation") {
+        REQUIRE(rec.get_block_length() == 11);  // 110 - 100 + 1
+    }
+    
+    SECTION("Validate reference block") {
+        REQUIRE(rec.validate_reference_block());
+    }
+    
+    SECTION("Genotype validation") {
+        vcf::reference_block block = rec.get_reference_block();
+        REQUIRE(vcf::is_reference_genotype(block.genotype));
+        REQUIRE_FALSE(vcf::is_no_call_genotype(block.genotype));
+    }
+    
+    std::remove(test_file.c_str());
+}
+
+TEST_CASE("Mixed gVCF variant", "[vcf][phase4]") {
+    const std::string test_file = "test_gvcf_mixed.vcf";
+    {
+        std::ofstream out(test_file.c_str());
+        out << "##fileformat=VCFv4.3\n";
+        out << "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n";
+        out << "##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"Read Depth\">\n";
+        out << "##FORMAT=<ID=GQ,Number=1,Type=Integer,Description=\"Genotype Quality\">\n";
+        out << "##FORMAT=<ID=PL,Number=G,Type=Integer,Description=\"Phred-scaled likelihoods\">\n";
+        out << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSample1\n";
+        out << "chr1\t111\t.\tT\tC,<*>\t213\t.\t.\tGT:DP:GQ:PL\t0/1:23:99:51,0,36,93,92,86\n";
+        out.close();
+    }
+    
+    vcf::reader reader(test_file);
+    vcf::record rec;
+    REQUIRE(reader.read_record(rec));
+    
+    SECTION("Has NON_REF but not pure reference block") {
+        REQUIRE(rec.has_non_ref_allele());
+        REQUIRE_FALSE(rec.is_reference_block());
+    }
+    
+    SECTION("Multiple alleles including <*>") {
+        REQUIRE(rec.alt().size() == 2);
+        REQUIRE(rec.alt()[0] == "C");
+        REQUIRE(rec.alt()[1] == "<*>");
+    }
+    
+    std::remove(test_file.c_str());
+}
+
+TEST_CASE("Multiple reference blocks", "[vcf][phase4]") {
+    const std::string test_file = "test_gvcf_multi_blocks.vcf";
+    {
+        std::ofstream out(test_file.c_str());
+        out << "##fileformat=VCFv4.3\n";
+        out << "##INFO=<ID=END,Number=1,Type=Integer,Description=\"End position\">\n";
+        out << "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n";
+        out << "##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"Read Depth\">\n";
+        out << "##FORMAT=<ID=GQ,Number=1,Type=Integer,Description=\"Genotype Quality\">\n";
+        out << "##FORMAT=<ID=MIN_DP,Number=1,Type=Integer,Description=\"Minimum DP\">\n";
+        out << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSample1\n";
+        out << "chr1\t100\t.\tG\t<*>\t.\t.\tEND=110\tGT:DP:GQ:MIN_DP\t0/0:25:60:23\n";
+        out << "chr1\t111\t.\tT\tC,<*>\t213\t.\t.\tGT:DP:GQ\t0/1:23:99\n";
+        out << "chr1\t112\t.\tC\t<*>\t.\t.\tEND=120\tGT:DP:GQ:MIN_DP\t0/0:27:63:27\n";
+        out.close();
+    }
+    
+    vcf::reader reader(test_file);
+    
+    SECTION("First record - reference block") {
+        vcf::record rec1;
+        REQUIRE(reader.read_record(rec1));
+        REQUIRE(rec1.is_reference_block());
+        REQUIRE(rec1.get_block_length() == 11);
+        
+        vcf::reference_block block1 = rec1.get_reference_block();
+        REQUIRE(block1.start_pos == 100);
+        REQUIRE(block1.end_pos == 110);
+        REQUIRE(block1.min_depth == 23);
+    }
+    
+    SECTION("Second record - variant with NON_REF") {
+        vcf::record rec1, rec2;
+        reader.read_record(rec1);
+        REQUIRE(reader.read_record(rec2));
+        REQUIRE_FALSE(rec2.is_reference_block());
+        REQUIRE(rec2.has_non_ref_allele());
+        REQUIRE(rec2.get_block_length() == 1);  // No END field
+    }
+    
+    SECTION("Third record - another reference block") {
+        vcf::record rec1, rec2, rec3;
+        reader.read_record(rec1);
+        reader.read_record(rec2);
+        REQUIRE(reader.read_record(rec3));
+        REQUIRE(rec3.is_reference_block());
+        REQUIRE(rec3.get_block_length() == 9);  // 120 - 112 + 1
+        
+        vcf::reference_block block3 = rec3.get_reference_block();
+        REQUIRE(block3.start_pos == 112);
+        REQUIRE(block3.end_pos == 120);
+        REQUIRE(block3.min_depth == 27);
+    }
+    
+    std::remove(test_file.c_str());
+}
+
+TEST_CASE("Reference block validation", "[vcf][phase4]") {
+    SECTION("Valid reference block") {
+        vcf::reference_block block;
+        block.start_pos = 100;
+        block.end_pos = 110;
+        block.min_depth = 20;
+        block.depth = 25;
+        block.genotype = "0/0";
+        REQUIRE(vcf::validate_reference_block(block));
+    }
+    
+    SECTION("Invalid: end before start") {
+        vcf::reference_block block;
+        block.start_pos = 100;
+        block.end_pos = 90;
+        REQUIRE_FALSE(vcf::validate_reference_block(block));
+    }
+    
+    SECTION("Invalid: MIN_DP > DP") {
+        vcf::reference_block block;
+        block.start_pos = 100;
+        block.min_depth = 30;
+        block.depth = 25;
+        block.genotype = "0/0";
+        REQUIRE_FALSE(vcf::validate_reference_block(block));
+    }
+    
+    SECTION("Invalid: non-reference genotype") {
+        vcf::reference_block block;
+        block.start_pos = 100;
+        block.genotype = "0/1";
+        REQUIRE_FALSE(vcf::validate_reference_block(block));
+    }
+    
+    SECTION("Valid: no-call genotype allowed") {
+        vcf::reference_block block;
+        block.start_pos = 100;
+        block.genotype = "./.";
+        REQUIRE(vcf::validate_reference_block(block));
+    }
+}
+
+TEST_CASE("Genotype type checking", "[vcf][phase4]") {
+    SECTION("Reference genotypes") {
+        REQUIRE(vcf::is_reference_genotype("0/0"));
+        REQUIRE(vcf::is_reference_genotype("0|0"));
+        REQUIRE(vcf::is_reference_genotype("0"));
+    }
+    
+    SECTION("Non-reference genotypes") {
+        REQUIRE_FALSE(vcf::is_reference_genotype("0/1"));
+        REQUIRE_FALSE(vcf::is_reference_genotype("1/1"));
+        REQUIRE_FALSE(vcf::is_reference_genotype("./."));
+    }
+    
+    SECTION("No-call genotypes") {
+        REQUIRE(vcf::is_no_call_genotype("./."));
+        REQUIRE(vcf::is_no_call_genotype(".|."));
+        REQUIRE(vcf::is_no_call_genotype("."));
+    }
+    
+    SECTION("Not no-call genotypes") {
+        REQUIRE_FALSE(vcf::is_no_call_genotype("0/0"));
+        REQUIRE_FALSE(vcf::is_no_call_genotype("0/1"));
+    }
+}

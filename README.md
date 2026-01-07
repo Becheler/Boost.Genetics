@@ -36,6 +36,14 @@ Complete implementation of the Variant Call Format specification (VCFv4.3):
 - **SV detection methods**: is_symbolic_sv(), is_breakend(), get_sv_type(), get_sv_info()
 - **Confidence intervals**: Support for imprecise SVs with position uncertainty
 
+### Phase 4 (Complete)
+- **gVCF reference blocks**: Full support for `<*>` and `<NON_REF>` symbolic alleles
+- **END field parsing**: Parse END INFO field for reference block ranges
+- **MIN_DP support**: Minimum depth tracking across reference blocks
+- **Reference block validation**: Validate genotypes, depth consistency, position ranges
+- **Block length calculation**: Automatic calculation of reference block spans
+- **Mixed variants**: Support for variants with both alternate alleles and `<*>`
+
 ## Quick Start
 
 ### Using the Library
@@ -189,7 +197,7 @@ This is a prototype candidate library for Boost. Contributions are welcome!
 - ✅ **Phase 1: VCFv4.3 text format** - Core reader/writer
 - ✅ **Phase 2: Extended features** - Metadata parsing, validation, percent encoding
 - ✅ **Phase 3: Structural variants** - Support for `<DEL>`, `<INS>`, breakends, SVTYPE/END/SVLEN
-- 📋 **Phase 4: gVCF support** - Reference blocks with `<*>` allele
+- ✅ **Phase 4: gVCF support** - Reference blocks with `<*>` allele, END field, MIN_DP
 - 📋 **Phase 5: BCF binary format** - Binary compressed VCF
 - 📋 **Phase 6: BGZF compression** - Block compression support
 - 📋 **Phase 7: Tabix indexing** - Random access by genomic region

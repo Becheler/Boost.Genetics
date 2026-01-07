@@ -231,7 +231,7 @@ Two breakends forming a novel adjacency:
 
 ---
 
-## Phase 4: gVCF Support (Optional)
+## Phase 4: gVCF Support ✅
 
 ### 4.1 Reference Blocks
 
