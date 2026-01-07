@@ -178,7 +178,7 @@ public:
     const std::string& filter() const { return filter_; }
     const std::map<std::string, std::string>& info() const { return info_; }
     const std::string& format() const { return format_; }
-    const std::vector<std::map<std::string, std::string>>& samples() const { return samples_; }
+    const std::vector<std::vector<std::pair<std::string, std::string>>>& samples() const { return samples_; }
 
     // Setters
     void set_chrom(const std::string& chrom) { chrom_ = chrom; }
@@ -190,7 +190,7 @@ public:
     void set_filter(const std::string& filter) { filter_ = filter; }
     void set_info(const std::map<std::string, std::string>& info) { info_ = info; }
     void set_format(const std::string& format) { format_ = format; }
-    void set_samples(const std::vector<std::map<std::string, std::string>>& samples) { samples_ = samples; }
+    void set_samples(const std::vector<std::vector<std::pair<std::string, std::string>>>& samples) { samples_ = samples; }
 
     /// @brief Add an INFO field entry
     void add_info(const std::string& key, const std::string& value) {
@@ -198,8 +198,35 @@ public:
     }
 
     /// @brief Add a sample with genotype data
-    void add_sample(const std::map<std::string, std::string>& sample_data) {
+    void add_sample(const std::vector<std::pair<std::string, std::string>>& sample_data) {
         samples_.push_back(sample_data);
+    }
+    
+    /// @brief Add a sample with genotype data (backwards compatibility)
+    /// Orders data according to format_ field
+    void add_sample(const std::map<std::string, std::string>& sample_data) {
+        std::vector<std::pair<std::string, std::string>> vec_data;
+        
+        // If we have a format string, order the data accordingly
+        if (!format_.empty()) {
+            const std::vector<std::string>& format_fields = get_format_fields();
+            vec_data.reserve(format_fields.size());
+            for (const std::string& field : format_fields) {
+                auto it = sample_data.find(field);
+                if (it != sample_data.end()) {
+                    vec_data.emplace_back(field, it->second);
+                } else {
+                    vec_data.emplace_back(field, ".");
+                }
+            }
+        } else {
+            // No format string, just copy in whatever order
+            vec_data.reserve(sample_data.size());
+            for (const auto& kv : sample_data) {
+                vec_data.emplace_back(kv.first, kv.second);
+            }
+        }
+        samples_.push_back(std::move(vec_data));
     }
 
     /// @brief Phase 2: Validate against metadata
@@ -312,7 +339,10 @@ public:
         std::string info_str = get_info_string();
         std::map<std::string, std::string> sample_data;
         if (!samples_.empty()) {
-            sample_data = samples_[0];
+            // Convert vector<pair> to map for backward compatibility
+            for (const auto& kv : samples_[0]) {
+                sample_data[kv.first] = kv.second;
+            }
         }
         return parse_reference_block(static_cast<int>(pos_), info_str, sample_data);
     }
@@ -324,7 +354,10 @@ public:
         std::string info_str = get_info_string();
         std::map<std::string, std::string> sample_data;
         if (sample_idx < samples_.size()) {
-            sample_data = samples_[sample_idx];
+            // Convert vector<pair> to map for backward compatibility
+            for (const auto& kv : samples_[sample_idx]) {
+                sample_data[kv.first] = kv.second;
+            }
         }
         return parse_reference_block(static_cast<int>(pos_), info_str, sample_data);
     }
@@ -441,20 +474,12 @@ public:
         if (!format_.empty() && !samples_.empty()) {
             oss << "\t" << format_;
             
-            // Parse format fields once (cached in format_fields_ if available)
-            const std::vector<std::string>& format_fields = get_format_fields();
-            
+            // Samples are stored in format field order, just output them directly
             for (std::size_t i = 0; i < samples_.size(); ++i) {
                 oss << "\t";
-                for (std::size_t j = 0; j < format_fields.size(); ++j) {
+                for (std::size_t j = 0; j < samples_[i].size(); ++j) {
                     if (j > 0) oss << ":";
-                    std::map<std::string, std::string>::const_iterator sample_it = 
-                        samples_[i].find(format_fields[j]);
-                    if (sample_it != samples_[i].end()) {
-                        oss << sample_it->second;
-                    } else {
-                        oss << ".";
-                    }
+                    oss << samples_[i][j].second;
                 }
             }
         }
@@ -472,7 +497,7 @@ private:
     std::string filter_;
     std::map<std::string, std::string> info_;
     std::string format_;
-    std::vector<std::map<std::string, std::string>> samples_;
+    std::vector<std::vector<std::pair<std::string, std::string>>> samples_;
     mutable std::vector<std::string> format_fields_; // Cached parsed format
 
     /// @brief Get parsed format fields (cached)
@@ -828,23 +853,24 @@ private:
                 format_fields.emplace_back(field);
             });
             
-            // Parse each sample
-            std::vector<std::map<std::string, std::string>> samples;
+            // Parse each sample (use vector<pair> instead of map for cache locality)
+            std::vector<std::vector<std::pair<std::string, std::string>>> samples;
             samples.reserve(10);  // Reserve space for typical sample count
             
             while (fields.has_more()) {
                 std::string_view sample_view = fields.next();
-                std::map<std::string, std::string> sample_map;
+                std::vector<std::pair<std::string, std::string>> sample_vec;
+                sample_vec.reserve(format_fields.size());
                 
                 std::size_t field_idx = 0;
                 detail::split_view(sample_view, ':', [&](std::string_view value) {
                     if (field_idx < format_fields.size()) {
-                        sample_map.emplace(format_fields[field_idx], std::string(value));
+                        sample_vec.emplace_back(format_fields[field_idx], std::string(value));
                         ++field_idx;
                     }
                 });
                 
-                samples.push_back(std::move(sample_map));
+                samples.push_back(std::move(sample_vec));
             }
             rec.set_samples(samples);
         }

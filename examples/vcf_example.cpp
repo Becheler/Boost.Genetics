@@ -180,14 +180,15 @@ int main() {
             std::cout << std::endl;
             
             // Display genotype data
-            const std::vector<std::map<std::string, std::string>>& samples_data = rec.samples();
+            const auto& samples_data = rec.samples();
             for (std::size_t j = 0; j < samples_data.size(); ++j) {
                 std::cout << "  " << sample_names[j] << ": ";
-                const std::map<std::string, std::string>& sample = samples_data[j];
-                for (std::map<std::string, std::string>::const_iterator it = sample.begin();
-                     it != sample.end(); ++it) {
-                    if (it != sample.begin()) std::cout << " ";
-                    std::cout << it->first << "=" << it->second;
+                const auto& sample = samples_data[j];
+                bool first_field = true;
+                for (const auto& kv : sample) {
+                    if (!first_field) std::cout << " ";
+                    std::cout << kv.first << "=" << kv.second;
+                    first_field = false;
                 }
                 std::cout << std::endl;
             }
