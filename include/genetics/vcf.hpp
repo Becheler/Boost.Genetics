@@ -513,11 +513,13 @@ public:
     /// @brief Constructor
     /// @param filename Path to VCF file
     explicit reader(const std::string& filename) 
-        : filename_(filename), line_number_(0) {
+        : filename_(filename), line_number_(0), buffer_(1024 * 1024) {  // 1MB buffer
         file_.open(filename_.c_str());
         if (!file_.is_open()) {
             throw std::runtime_error("Cannot open VCF file: " + filename_);
         }
+        // Set large buffer for faster I/O
+        file_.rdbuf()->pubsetbuf(buffer_.data(), buffer_.size());
         read_header();
     }
 
@@ -611,6 +613,7 @@ private:
     std::string version_;
     std::vector<std::string> header_lines_;
     std::vector<std::string> sample_names_;
+    std::vector<char> buffer_;  // I/O buffer for faster reading
     
     // Phase 2: Structured metadata
     std::map<std::string, info_meta> info_defs_;
@@ -799,16 +802,16 @@ private:
         // Set FILTER
         rec.set_filter(filter_view == "." ? "" : std::string(filter_view));
         
-        // Parse INFO (zero-copy split, then store as strings)
+        // Parse INFO (zero-copy split, use emplace for efficiency)
         std::map<std::string, std::string> info_map;
         if (info_view != ".") {
             detail::split_view(info_view, ';', [&info_map](std::string_view info_field) {
                 std::size_t eq_pos = info_field.find('=');
                 if (eq_pos != std::string_view::npos) {
-                    info_map[std::string(info_field.substr(0, eq_pos))] = 
-                        std::string(info_field.substr(eq_pos + 1));
+                    info_map.emplace(std::string(info_field.substr(0, eq_pos)),
+                                    std::string(info_field.substr(eq_pos + 1)));
                 } else {
-                    info_map[std::string(info_field)] = "";
+                    info_map.emplace(std::string(info_field), "");
                 }
             });
         }
@@ -827,6 +830,8 @@ private:
             
             // Parse each sample
             std::vector<std::map<std::string, std::string>> samples;
+            samples.reserve(10);  // Reserve space for typical sample count
+            
             while (fields.has_more()) {
                 std::string_view sample_view = fields.next();
                 std::map<std::string, std::string> sample_map;
@@ -834,7 +839,7 @@ private:
                 std::size_t field_idx = 0;
                 detail::split_view(sample_view, ':', [&](std::string_view value) {
                     if (field_idx < format_fields.size()) {
-                        sample_map[format_fields[field_idx]] = std::string(value);
+                        sample_map.emplace(format_fields[field_idx], std::string(value));
                         ++field_idx;
                     }
                 });

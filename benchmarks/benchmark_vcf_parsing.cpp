@@ -42,17 +42,34 @@ benchmark_result benchmark_parsing(const std::string& vcf_file) {
     
     size_t record_count = 0;
     vcf::record rec;
+    
+    // Time breakdown
+    auto parse_start = std::chrono::high_resolution_clock::now();
+    double io_time = 0.0, parse_time = 0.0;
+    
     while (reader.read_record(rec)) {
+        auto parse_end = std::chrono::high_resolution_clock::now();
+        parse_time += std::chrono::duration<double>(parse_end - parse_start).count();
+        
         record_count++;
         // Access fields to ensure they're parsed
         (void)rec.chrom();
         (void)rec.pos();
         (void)rec.ref();
         (void)rec.alt().size();
+        (void)rec.info();
+        (void)rec.samples();
+        
+        parse_start = std::chrono::high_resolution_clock::now();
+        io_time += std::chrono::duration<double>(parse_start - parse_end).count();
     }
     
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = end - start;
+    
+    std::cerr << "[PROFILE] I/O time: " << io_time << "s\n";
+    std::cerr << "[PROFILE] Parse time: " << parse_time << "s\n";
+    std::cerr << "[PROFILE] Other: " << (elapsed.count() - io_time - parse_time) << "s\n";
     
     return {"VCF Parsing", elapsed.count(), record_count, file_size};
 }
