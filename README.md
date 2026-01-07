@@ -29,6 +29,13 @@ Complete implementation of the Variant Call Format specification (VCFv4.3):
 - **Variant type detection**: Methods to identify SNPs, insertions, deletions
 - **Comprehensive metadata access**: Retrieve parsed header definitions programmatically
 
+### Phase 3 (Complete)
+- **Structural variant support**: Full support for symbolic alleles (`<DEL>`, `<INS>`, `<DUP>`, `<INV>`, `<CNV>`)
+- **Breakend notation**: Complete parser for all 4 breakend patterns (t[p[, t]p], ]p]t, [p[t)
+- **SV INFO fields**: Parsing of SVTYPE, END, SVLEN, CIPOS, CIEND, IMPRECISE, MATEID, EVENT
+- **SV detection methods**: is_symbolic_sv(), is_breakend(), get_sv_type(), get_sv_info()
+- **Confidence intervals**: Support for imprecise SVs with position uncertainty
+
 ## Quick Start
 
 ### Using the Library
@@ -181,7 +188,7 @@ This is a prototype candidate library for Boost. Contributions are welcome!
 
 - ✅ **Phase 1: VCFv4.3 text format** - Core reader/writer
 - ✅ **Phase 2: Extended features** - Metadata parsing, validation, percent encoding
-- 📋 **Phase 3: Structural variants** - Support for `<DEL>`, `<INS>`, breakends
+- ✅ **Phase 3: Structural variants** - Support for `<DEL>`, `<INS>`, breakends, SVTYPE/END/SVLEN
 - 📋 **Phase 4: gVCF support** - Reference blocks with `<*>` allele
 - 📋 **Phase 5: BCF binary format** - Binary compressed VCF
 - 📋 **Phase 6: BGZF compression** - Block compression support

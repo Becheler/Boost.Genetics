@@ -97,7 +97,7 @@ S2:
 
 ---
 
-## Phase 3: Structural Variants (Optional)
+## Phase 3: Structural Variants ✅
 
 ### 3.1 Reserved INFO Keys for SVs
 

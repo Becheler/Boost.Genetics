@@ -542,3 +542,241 @@ TEST_CASE("VCF Phase 2: Record validation", "[vcf][phase2]") {
     
     std::remove(test_file.c_str());
 }
+
+// ============================================================================
+// PHASE 3: STRUCTURAL VARIANT TESTS
+// ============================================================================
+
+TEST_CASE("Symbolic allele detection", "[vcf][phase3]") {
+    SECTION("DEL symbolic allele") {
+        REQUIRE(vcf::is_symbolic_allele("<DEL>"));
+        REQUIRE(vcf::get_symbolic_id("<DEL>") == "DEL");
+        REQUIRE(vcf::string_to_sv_type("DEL") == vcf::sv_type::DEL);
+    }
+    
+    SECTION("INS symbolic allele") {
+        REQUIRE(vcf::is_symbolic_allele("<INS>"));
+        REQUIRE(vcf::get_symbolic_id("<INS>") == "INS");
+    }
+    
+    SECTION("DUP symbolic allele") {
+        REQUIRE(vcf::is_symbolic_allele("<DUP>"));
+        REQUIRE(vcf::get_symbolic_id("<DUP>") == "DUP");
+    }
+    
+    SECTION("INV symbolic allele") {
+        REQUIRE(vcf::is_symbolic_allele("<INV>"));
+        REQUIRE(vcf::get_symbolic_id("<INV>") == "INV");
+    }
+    
+    SECTION("CNV symbolic allele") {
+        REQUIRE(vcf::is_symbolic_allele("<CNV>"));
+        REQUIRE(vcf::get_symbolic_id("<CNV>") == "CNV");
+    }
+    
+    SECTION("Non-symbolic allele") {
+        REQUIRE_FALSE(vcf::is_symbolic_allele("A"));
+        REQUIRE_FALSE(vcf::is_symbolic_allele("ATG"));
+        REQUIRE(vcf::get_symbolic_id("A").empty());
+    }
+}
+
+TEST_CASE("Simple deletion with symbolic allele", "[vcf][phase3]") {
+    const std::string test_file = "test_sv_deletion.vcf";
+    {
+        std::ofstream out(test_file.c_str());
+        out << "##fileformat=VCFv4.3\n";
+        out << "##ALT=<ID=DEL,Description=\"Deletion\">\n";
+        out << "##INFO=<ID=SVTYPE,Number=1,Type=String,Description=\"Type of SV\">\n";
+        out << "##INFO=<ID=END,Number=1,Type=Integer,Description=\"End position\">\n";
+        out << "##INFO=<ID=SVLEN,Number=.,Type=Integer,Description=\"Length difference\">\n";
+        out << "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n";
+        out << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSample1\n";
+        out << "chr1\t1000\t.\tN\t<DEL>\t.\tPASS\tSVTYPE=DEL;END=2000;SVLEN=-1000\tGT\t1/1\n";
+        out.close();
+    }
+    
+    vcf::reader reader(test_file);
+    vcf::record rec;
+    REQUIRE(reader.read_record(rec));
+    
+    SECTION("Detect symbolic SV") {
+        REQUIRE(rec.is_symbolic_sv());
+        REQUIRE_FALSE(rec.is_breakend());
+    }
+    
+    SECTION("SV type detection") {
+        REQUIRE(rec.get_sv_type() == vcf::sv_type::DEL);
+    }
+    
+    SECTION("SV info parsing") {
+        vcf::sv_info sv = rec.get_sv_info();
+        REQUIRE(sv.type == vcf::sv_type::DEL);
+        REQUIRE(sv.end == 2000);
+        REQUIRE(sv.svlen == -1000);
+        REQUIRE_FALSE(sv.imprecise);
+    }
+    
+    SECTION("Helper methods") {
+        REQUIRE(rec.get_end_pos() == 2000);
+        REQUIRE(rec.get_svlen() == -1000);
+        REQUIRE_FALSE(rec.is_imprecise());
+    }
+    
+    std::remove(test_file.c_str());
+}
+
+TEST_CASE("Imprecise deletion", "[vcf][phase3]") {
+    const std::string test_file = "test_sv_imprecise.vcf";
+    {
+        std::ofstream out(test_file.c_str());
+        out << "##fileformat=VCFv4.3\n";
+        out << "##ALT=<ID=DEL,Description=\"Deletion\">\n";
+        out << "##INFO=<ID=IMPRECISE,Number=0,Type=Flag,Description=\"Imprecise variant\">\n";
+        out << "##INFO=<ID=SVTYPE,Number=1,Type=String,Description=\"Type of SV\">\n";
+        out << "##INFO=<ID=END,Number=1,Type=Integer,Description=\"End position\">\n";
+        out << "##INFO=<ID=SVLEN,Number=.,Type=Integer,Description=\"Length difference\">\n";
+        out << "##INFO=<ID=CIPOS,Number=2,Type=Integer,Description=\"CI around POS\">\n";
+        out << "##INFO=<ID=CIEND,Number=2,Type=Integer,Description=\"CI around END\">\n";
+        out << "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n";
+        out << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSample1\n";
+        out << "chr1\t5000\t.\tN\t<DEL>\t6\tPASS\tIMPRECISE;SVTYPE=DEL;END=5205;SVLEN=-205;CIPOS=-56,20;CIEND=-10,62\tGT\t0/1\n";
+        out.close();
+    }
+    
+    vcf::reader reader(test_file);
+    vcf::record rec;
+    REQUIRE(reader.read_record(rec));
+    
+    SECTION("Imprecise flag detection") {
+        vcf::sv_info sv = rec.get_sv_info();
+        REQUIRE(sv.imprecise);
+        REQUIRE(rec.is_imprecise());
+    }
+    
+    SECTION("Confidence intervals") {
+        vcf::sv_info sv = rec.get_sv_info();
+        REQUIRE(sv.cipos.first == -56);
+        REQUIRE(sv.cipos.second == 20);
+        REQUIRE(sv.ciend.first == -10);
+        REQUIRE(sv.ciend.second == 62);
+    }
+    
+    std::remove(test_file.c_str());
+}
+
+TEST_CASE("Breakend notation parsing", "[vcf][phase3]") {
+    SECTION("Pattern: t[p[ - forward strand, joined after") {
+        vcf::breakend bnd;
+        REQUIRE(vcf::parse_breakend("G[chr17:198982[", bnd));
+        REQUIRE(bnd.novel_sequence == "G");
+        REQUIRE(bnd.mate_chr == "chr17");
+        REQUIRE(bnd.mate_pos == 198982);
+        REQUIRE(bnd.orientation == vcf::breakend_orientation::FORWARD);
+        REQUIRE(bnd.position == vcf::breakend_position::AFTER);
+    }
+    
+    SECTION("Pattern: t]p] - reverse complement, joined after") {
+        vcf::breakend bnd;
+        REQUIRE(vcf::parse_breakend("T]chr13:123456]", bnd));
+        REQUIRE(bnd.novel_sequence == "T");
+        REQUIRE(bnd.mate_chr == "chr13");
+        REQUIRE(bnd.mate_pos == 123456);
+        REQUIRE(bnd.orientation == vcf::breakend_orientation::REVERSE);
+        REQUIRE(bnd.position == vcf::breakend_position::AFTER);
+    }
+    
+    SECTION("Pattern: ]p]t - forward strand, joined before") {
+        vcf::breakend bnd;
+        REQUIRE(vcf::parse_breakend("]chr2:321682]T", bnd));
+        REQUIRE(bnd.novel_sequence == "T");
+        REQUIRE(bnd.mate_chr == "chr2");
+        REQUIRE(bnd.mate_pos == 321682);
+        REQUIRE(bnd.orientation == vcf::breakend_orientation::FORWARD);
+        REQUIRE(bnd.position == vcf::breakend_position::BEFORE);
+    }
+    
+    SECTION("Pattern: [p[t - reverse complement, joined before") {
+        vcf::breakend bnd;
+        REQUIRE(vcf::parse_breakend("[chr13:123456[C", bnd));
+        REQUIRE(bnd.novel_sequence == "C");
+        REQUIRE(bnd.mate_chr == "chr13");
+        REQUIRE(bnd.mate_pos == 123456);
+        REQUIRE(bnd.orientation == vcf::breakend_orientation::REVERSE);
+        REQUIRE(bnd.position == vcf::breakend_position::BEFORE);
+    }
+    
+    SECTION("Non-breakend notation") {
+        vcf::breakend bnd;
+        REQUIRE_FALSE(vcf::parse_breakend("A", bnd));
+        REQUIRE_FALSE(vcf::parse_breakend("<DEL>", bnd));
+        REQUIRE_FALSE(vcf::parse_breakend("ATG", bnd));
+    }
+}
+
+TEST_CASE("Breakend VCF record", "[vcf][phase3]") {
+    const std::string test_file = "test_breakend.vcf";
+    {
+        std::ofstream out(test_file.c_str());
+        out << "##fileformat=VCFv4.3\n";
+        out << "##INFO=<ID=SVTYPE,Number=1,Type=String,Description=\"Type of SV\">\n";
+        out << "##INFO=<ID=MATEID,Number=.,Type=String,Description=\"Mate breakend ID\">\n";
+        out << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n";
+        out << "chr2\t321682\tbnd_V\tT\t]chr13:123456]T\t6\tPASS\tSVTYPE=BND;MATEID=bnd_U\n";
+        out << "chr13\t123456\tbnd_U\tC\tC[chr2:321682[\t6\tPASS\tSVTYPE=BND;MATEID=bnd_V\n";
+        out.close();
+    }
+    
+    vcf::reader reader(test_file);
+    vcf::record rec;
+    REQUIRE(reader.read_record(rec));
+    
+    SECTION("Detect breakend notation") {
+        REQUIRE(rec.is_breakend());
+        REQUIRE_FALSE(rec.is_symbolic_sv());
+    }
+    
+    SECTION("SV type is BND") {
+        REQUIRE(rec.get_sv_type() == vcf::sv_type::BND);
+    }
+    
+    SECTION("Parse breakend") {
+        vcf::breakend bnd;
+        REQUIRE(rec.get_breakend(bnd));
+        REQUIRE(bnd.novel_sequence == "T");
+        REQUIRE(bnd.mate_chr == "chr13");
+        REQUIRE(bnd.mate_pos == 123456);
+        REQUIRE(bnd.orientation == vcf::breakend_orientation::FORWARD);
+        REQUIRE(bnd.position == vcf::breakend_position::BEFORE);
+    }
+    
+    SECTION("MATEID parsing") {
+        vcf::sv_info sv = rec.get_sv_info();
+        REQUIRE(sv.mateid.size() == 1);
+        REQUIRE(sv.mateid[0] == "bnd_U");
+    }
+    
+    std::remove(test_file.c_str());
+}
+
+TEST_CASE("Multiple SV types", "[vcf][phase3]") {
+    SECTION("Duplication") {
+        REQUIRE(vcf::string_to_sv_type("DUP") == vcf::sv_type::DUP);
+        REQUIRE(vcf::sv_type_to_string(vcf::sv_type::DUP) == "DUP");
+    }
+    
+    SECTION("Inversion") {
+        REQUIRE(vcf::string_to_sv_type("INV") == vcf::sv_type::INV);
+        REQUIRE(vcf::sv_type_to_string(vcf::sv_type::INV) == "INV");
+    }
+    
+    SECTION("Copy number variation") {
+        REQUIRE(vcf::string_to_sv_type("CNV") == vcf::sv_type::CNV);
+        REQUIRE(vcf::sv_type_to_string(vcf::sv_type::CNV) == "CNV");
+    }
+    
+    SECTION("Unknown type") {
+        REQUIRE(vcf::string_to_sv_type("UNKNOWN") == vcf::sv_type::UNKNOWN);
+        REQUIRE(vcf::sv_type_to_string(vcf::sv_type::UNKNOWN) == "UNKNOWN");
+    }
+}

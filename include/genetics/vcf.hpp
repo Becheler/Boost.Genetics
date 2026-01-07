@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <cstddef>
 #include <genetics/vcf_phase2.hpp>
+#include <genetics/vcf_phase3.hpp>
 
 namespace boost {
 namespace genetics {
@@ -135,6 +136,61 @@ public:
         return ref_.length() > alt_[0].length();
     }
 
+    // ========================================================================
+    // PHASE 3: STRUCTURAL VARIANT METHODS
+    // ========================================================================
+
+    /// @brief Check if ALT contains symbolic allele
+    bool is_symbolic_sv() const {
+        if (alt_.empty()) return false;
+        return is_symbolic_allele(alt_[0]);
+    }
+
+    /// @brief Check if ALT contains breakend notation
+    bool is_breakend() const {
+        if (alt_.empty()) return false;
+        return is_breakend_notation(alt_[0]);
+    }
+
+    /// @brief Get SV type from record
+    sv_type get_sv_type() const {
+        if (alt_.empty()) return sv_type::UNKNOWN;
+        return detect_sv_type(alt_[0], get_info_string());
+    }
+
+    /// @brief Parse SV information from INFO field
+    sv_info get_sv_info() const {
+        return parse_sv_info(get_info_string());
+    }
+
+    /// @brief Parse breakend notation from ALT field
+    /// @param result Output breakend structure
+    /// @return true if successfully parsed
+    bool get_breakend(breakend& result) const {
+        if (alt_.empty()) return false;
+        return parse_breakend(alt_[0], result);
+    }
+
+    /// @brief Get END position from INFO (for SVs)
+    /// @return END position or -1 if not set
+    int get_end_pos() const {
+        sv_info sv = get_sv_info();
+        return sv.end;
+    }
+
+    /// @brief Get SVLEN from INFO
+    /// @return SVLEN value or 0 if not set
+    int get_svlen() const {
+        sv_info sv = get_sv_info();
+        return sv.svlen;
+    }
+
+    /// @brief Check if SV is imprecise
+    bool is_imprecise() const {
+        sv_info sv = get_sv_info();
+        return sv.imprecise;
+    }
+
     /// @brief Convert record to VCF line format
     std::string to_string(const std::vector<std::string>& sample_names = std::vector<std::string>()) const {
         std::ostringstream oss;
@@ -237,6 +293,24 @@ private:
             }
         }
         return format_fields_;
+    }
+
+    /// @brief Convert INFO map to string format (for SV parsing)
+    std::string get_info_string() const {
+        if (info_.empty()) return ".";
+        
+        std::ostringstream oss;
+        bool first = true;
+        for (std::map<std::string, std::string>::const_iterator it = info_.begin();
+             it != info_.end(); ++it) {
+            if (!first) oss << ";";
+            oss << it->first;
+            if (!it->second.empty()) {
+                oss << "=" << it->second;
+            }
+            first = false;
+        }
+        return oss.str();
     }
 };
 
