@@ -6,7 +6,6 @@
 #define BOOST_GENETICS_GENETICS_HPP
 
 #include <genetics/version.hpp>
-#include <genetics/sequence.hpp>
-#include <genetics/variant.hpp>
+#include <genetics/vcf.hpp>
 
 #endif // BOOST_GENETICS_GENETICS_HPP

@@ -1,0 +1,512 @@
+//  Copyright (c) 2026 Boost.Genetics
+//  Distributed under the Boost Software License, Version 1.0.
+//  (See accompanying file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
+
+#ifndef BOOST_GENETICS_VCF_HPP
+#define BOOST_GENETICS_VCF_HPP
+
+#include <string>
+#include <vector>
+#include <map>
+#include <sstream>
+#include <fstream>
+#include <stdexcept>
+#include <cstddef>
+
+namespace boost {
+namespace genetics {
+namespace vcf {
+
+/// @brief VCF parsing exception with line context
+class vcf_parse_error : public std::runtime_error {
+public:
+    /// @brief Constructor with message and line number
+    /// @param msg Error message
+    /// @param line Line number where error occurred (0 if unknown)
+    vcf_parse_error(const std::string& msg, std::size_t line = 0)
+        : std::runtime_error(build_message(msg, line)), line_number_(line) {}
+
+    /// @brief Get the line number where error occurred
+    std::size_t line() const { return line_number_; }
+
+private:
+    std::size_t line_number_;
+
+    static std::string build_message(const std::string& msg, std::size_t line) {
+        if (line == 0) {
+            return msg;
+        }
+        std::ostringstream oss;
+        oss << "Line " << line << ": " << msg;
+        return oss.str();
+    }
+};
+
+/// @brief Represents a single VCF record (variant call)
+/// Compliant with VCFv4.3 specification
+class record {
+public:
+    /// @brief Default constructor
+    record() : pos_(0), qual_(0.0) {}
+
+    /// @brief Constructor with basic variant information
+    /// @param chrom Chromosome identifier
+    /// @param pos Position (1-based)
+    /// @param id Variant ID (or "." if none)
+    /// @param ref Reference allele
+    /// @param alt Alternative allele(s)
+    /// @param qual Quality score
+    /// @param filter Filter status
+    /// @param info INFO field data
+    record(const std::string& chrom, std::size_t pos, const std::string& id,
+           const std::string& ref, const std::vector<std::string>& alt,
+           double qual, const std::string& filter,
+           const std::map<std::string, std::string>& info = std::map<std::string, std::string>())
+        : chrom_(chrom), pos_(pos), id_(id), ref_(ref), alt_(alt),
+          qual_(qual), filter_(filter), info_(info) {}
+
+    // Getters
+    const std::string& chrom() const { return chrom_; }
+    std::size_t pos() const { return pos_; }
+    const std::string& id() const { return id_; }
+    const std::string& ref() const { return ref_; }
+    const std::vector<std::string>& alt() const { return alt_; }
+    double qual() const { return qual_; }
+    const std::string& filter() const { return filter_; }
+    const std::map<std::string, std::string>& info() const { return info_; }
+    const std::string& format() const { return format_; }
+    const std::vector<std::map<std::string, std::string>>& samples() const { return samples_; }
+
+    // Setters
+    void set_chrom(const std::string& chrom) { chrom_ = chrom; }
+    void set_pos(std::size_t pos) { pos_ = pos; }
+    void set_id(const std::string& id) { id_ = id; }
+    void set_ref(const std::string& ref) { ref_ = ref; }
+    void set_alt(const std::vector<std::string>& alt) { alt_ = alt; }
+    void set_qual(double qual) { qual_ = qual; }
+    void set_filter(const std::string& filter) { filter_ = filter; }
+    void set_info(const std::map<std::string, std::string>& info) { info_ = info; }
+    void set_format(const std::string& format) { format_ = format; }
+    void set_samples(const std::vector<std::map<std::string, std::string>>& samples) { samples_ = samples; }
+
+    /// @brief Add an INFO field entry
+    void add_info(const std::string& key, const std::string& value) {
+        info_[key] = value;
+    }
+
+    /// @brief Add a sample with genotype data
+    void add_sample(const std::map<std::string, std::string>& sample_data) {
+        samples_.push_back(sample_data);
+    }
+
+    /// @brief Convert record to VCF line format
+    std::string to_string(const std::vector<std::string>& sample_names = std::vector<std::string>()) const {
+        std::ostringstream oss;
+        
+        // CHROM
+        oss << chrom_ << "\t";
+        
+        // POS
+        oss << pos_ << "\t";
+        
+        // ID
+        oss << (id_.empty() ? "." : id_) << "\t";
+        
+        // REF
+        oss << ref_ << "\t";
+        
+        // ALT
+        if (alt_.empty()) {
+            oss << ".";
+        } else {
+            for (std::size_t i = 0; i < alt_.size(); ++i) {
+                if (i > 0) oss << ",";
+                oss << alt_[i];
+            }
+        }
+        oss << "\t";
+        
+        // QUAL
+        if (qual_ == 0.0) {
+            oss << ".";
+        } else {
+            oss << qual_;
+        }
+        oss << "\t";
+        
+        // FILTER
+        oss << (filter_.empty() ? "." : filter_) << "\t";
+        
+        // INFO
+        if (info_.empty()) {
+            oss << ".";
+        } else {
+            bool first = true;
+            for (std::map<std::string, std::string>::const_iterator it = info_.begin();
+                 it != info_.end(); ++it) {
+                if (!first) oss << ";";
+                oss << it->first;
+                if (!it->second.empty()) {
+                    oss << "=" << it->second;
+                }
+                first = false;
+            }
+        }
+        
+        // FORMAT and samples (if present)
+        if (!format_.empty() && !samples_.empty()) {
+            oss << "\t" << format_;
+            
+            // Parse format fields once (cached in format_fields_ if available)
+            const std::vector<std::string>& format_fields = get_format_fields();
+            
+            for (std::size_t i = 0; i < samples_.size(); ++i) {
+                oss << "\t";
+                for (std::size_t j = 0; j < format_fields.size(); ++j) {
+                    if (j > 0) oss << ":";
+                    std::map<std::string, std::string>::const_iterator sample_it = 
+                        samples_[i].find(format_fields[j]);
+                    if (sample_it != samples_[i].end()) {
+                        oss << sample_it->second;
+                    } else {
+                        oss << ".";
+                    }
+                }
+            }
+        }
+        
+        return oss.str();
+    }
+
+private:
+    std::string chrom_;
+    std::size_t pos_;
+    std::string id_;
+    std::string ref_;
+    std::vector<std::string> alt_;
+    double qual_;
+    std::string filter_;
+    std::map<std::string, std::string> info_;
+    std::string format_;
+    std::vector<std::map<std::string, std::string>> samples_;
+    mutable std::vector<std::string> format_fields_; // Cached parsed format
+
+    /// @brief Get parsed format fields (cached)
+    const std::vector<std::string>& get_format_fields() const {
+        if (format_fields_.empty() && !format_.empty()) {
+            std::istringstream format_stream(format_);
+            std::string field;
+            while (std::getline(format_stream, field, ':')) {
+                format_fields_.push_back(field);
+            }
+        }
+        return format_fields_;
+    }
+};
+
+/// @brief VCF file reader
+/// Supports VCFv4.3 and BCFv2.2 specifications
+class reader {
+public:
+    /// @brief Constructor
+    /// @param filename Path to VCF file
+    explicit reader(const std::string& filename) 
+        : filename_(filename), line_number_(0) {
+        file_.open(filename_.c_str());
+        if (!file_.is_open()) {
+            throw std::runtime_error("Cannot open VCF file: " + filename_);
+        }
+        read_header();
+    }
+
+    /// @brief Destructor
+    ~reader() {
+        if (file_.is_open()) {
+            file_.close();
+        }
+    }
+
+    /// @brief Get the VCF version from header
+    const std::string& version() const { return version_; }
+
+    /// @brief Get all header lines
+    const std::vector<std::string>& header_lines() const { return header_lines_; }
+
+    /// @brief Get sample names
+    const std::vector<std::string>& sample_names() const { return sample_names_; }
+
+    /// @brief Read next record
+    /// @param rec Record to populate
+    /// @return true if record was read, false if end of file
+    bool read_record(record& rec) {
+        std::string line;
+        while (std::getline(file_, line)) {
+            ++line_number_;
+            
+            // Skip empty lines
+            if (line.empty()) continue;
+            
+            // Skip header lines (should not happen after read_header, but be safe)
+            if (line[0] == '#') continue;
+            
+            return parse_record(line, rec);
+        }
+        return false;
+    }
+
+    /// @brief Read all records
+    std::vector<record> read_all() {
+        std::vector<record> records;
+        record rec;
+        while (read_record(rec)) {
+            records.push_back(rec);
+        }
+        return records;
+    }
+
+private:
+    std::string filename_;
+    std::ifstream file_;
+    std::size_t line_number_;
+    std::string version_;
+    std::vector<std::string> header_lines_;
+    std::vector<std::string> sample_names_;
+
+    void read_header() {
+        std::string line;
+        while (std::getline(file_, line)) {
+            ++line_number_;
+            
+            if (line.empty()) continue;
+            
+            if (line[0] == '#') {
+                header_lines_.push_back(line);
+                
+                // Extract version
+                if (line.compare(0, 13, "##fileformat=") == 0) {
+                    version_ = line.substr(13);
+                }
+                
+                // Extract sample names from column header line
+                if (line[1] != '#') {
+                    std::istringstream iss(line.substr(1)); // Remove leading #
+                    std::string token;
+                    std::vector<std::string> columns;
+                    while (iss >> token) {
+                        columns.push_back(token);
+                    }
+                    
+                    // Sample names start after FORMAT column (index 9)
+                    if (columns.size() > 9) {
+                        sample_names_.assign(columns.begin() + 9, columns.end());
+                    }
+                }
+            } else {
+                // First non-header line, put it back by seeking back
+                file_.seekg(-(line.length() + 1), std::ios::cur);
+                --line_number_;
+                break;
+            }
+        }
+    }
+
+    bool parse_record(const std::string& line, record& rec) {
+        std::istringstream iss(line);
+        std::string chrom, id, ref, alt_str, qual_str, filter, info_str;
+        std::size_t pos;
+        
+        // Parse required fields
+        if (!(iss >> chrom >> pos >> id >> ref >> alt_str >> qual_str >> filter >> info_str)) {
+            throw vcf_parse_error("Invalid VCF record: expected 8 fixed fields", line_number_);
+        }
+        
+        // Set basic fields
+        rec.set_chrom(chrom);
+        rec.set_pos(pos);
+        rec.set_id(id == "." ? "" : id);
+        rec.set_ref(ref);
+        
+        // Parse ALT alleles
+        std::vector<std::string> alt_alleles;
+        if (alt_str != ".") {
+            std::istringstream alt_stream(alt_str);
+            std::string allele;
+            while (std::getline(alt_stream, allele, ',')) {
+                alt_alleles.push_back(allele);
+            }
+        }
+        rec.set_alt(alt_alleles);
+        
+        // Parse QUAL
+        if (qual_str != ".") {
+            rec.set_qual(std::atof(qual_str.c_str()));
+        } else {
+            rec.set_qual(0.0);
+        }
+        
+        // Set FILTER
+        rec.set_filter(filter == "." ? "" : filter);
+        
+        // Parse INFO
+        std::map<std::string, std::string> info_map;
+        if (info_str != ".") {
+            std::istringstream info_stream(info_str);
+            std::string info_field;
+            while (std::getline(info_stream, info_field, ';')) {
+                std::size_t eq_pos = info_field.find('=');
+                if (eq_pos != std::string::npos) {
+                    info_map[info_field.substr(0, eq_pos)] = info_field.substr(eq_pos + 1);
+                } else {
+                    info_map[info_field] = "";
+                }
+            }
+        }
+        rec.set_info(info_map);
+        
+        // Parse FORMAT and sample data if present
+        std::string format;
+        if (iss >> format) {
+            rec.set_format(format);
+            
+            std::vector<std::string> format_fields;
+            std::istringstream format_stream(format);
+            std::string field;
+            while (std::getline(format_stream, field, ':')) {
+                format_fields.push_back(field);
+            }
+            
+            std::vector<std::map<std::string, std::string>> samples;
+            std::string sample_data;
+            while (iss >> sample_data) {
+                std::map<std::string, std::string> sample_map;
+                std::istringstream sample_stream(sample_data);
+                std::string value;
+                std::size_t field_idx = 0;
+                while (std::getline(sample_stream, value, ':') && field_idx < format_fields.size()) {
+                    sample_map[format_fields[field_idx]] = value;
+                    ++field_idx;
+                }
+                samples.push_back(sample_map);
+            }
+            rec.set_samples(samples);
+        }
+        
+        return true;
+    }
+
+    std::string to_string(std::size_t num) const {
+        std::ostringstream oss;
+        oss << num;
+        return oss.str();
+    }
+};
+
+/// @brief VCF file writer
+/// Supports VCFv4.3 and BCFv2.2 specifications
+class writer {
+public:
+    /// @brief Constructor
+    /// @param filename Path to output VCF file
+    /// @param version VCF version (default: VCFv4.3)
+    explicit writer(const std::string& filename, const std::string& version = "VCFv4.3")
+        : filename_(filename), version_(version) {
+        file_.open(filename_.c_str());
+        if (!file_.is_open()) {
+            throw vcf_parse_error("Cannot create VCF file: " + filename_);
+        }
+    }
+
+    /// @brief Destructor
+    ~writer() {
+        if (file_.is_open()) {
+            file_.close();
+        }
+    }
+
+    /// @brief Add a header line
+    void add_header_line(const std::string& line) {
+        header_lines_.push_back(line);
+    }
+
+    /// @brief Add a contig header line
+    void add_contig(const std::string& id, std::size_t length = 0) {
+        std::ostringstream oss;
+        oss << "##contig=<ID=" << id;
+        if (length > 0) {
+            oss << ",length=" << length;
+        }
+        oss << ">";
+        header_lines_.push_back(oss.str());
+    }
+
+    /// @brief Add an INFO header line
+    void add_info(const std::string& id, const std::string& number,
+                  const std::string& type, const std::string& description) {
+        std::ostringstream oss;
+        oss << "##INFO=<ID=" << id << ",Number=" << number
+            << ",Type=" << type << ",Description=\"" << description << "\">";
+        header_lines_.push_back(oss.str());
+    }
+
+    /// @brief Add a FORMAT header line
+    void add_format(const std::string& id, const std::string& number,
+                    const std::string& type, const std::string& description) {
+        std::ostringstream oss;
+        oss << "##FORMAT=<ID=" << id << ",Number=" << number
+            << ",Type=" << type << ",Description=\"" << description << "\">";
+        header_lines_.push_back(oss.str());
+    }
+
+    /// @brief Set sample names
+    void set_sample_names(const std::vector<std::string>& names) {
+        sample_names_ = names;
+    }
+
+    /// @brief Write the header
+    void write_header() {
+        // Write fileformat
+        file_ << "##fileformat=" << version_ << "\n";
+        
+        // Write other header lines
+        for (std::size_t i = 0; i < header_lines_.size(); ++i) {
+            file_ << header_lines_[i] << "\n";
+        }
+        
+        // Write column header
+        file_ << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO";
+        if (!sample_names_.empty()) {
+            file_ << "\tFORMAT";
+            for (std::size_t i = 0; i < sample_names_.size(); ++i) {
+                file_ << "\t" << sample_names_[i];
+            }
+        }
+        file_ << "\n";
+        file_.flush();
+    }
+
+    /// @brief Write a record
+    void write_record(const record& rec) {
+        file_ << rec.to_string(sample_names_) << "\n";
+        file_.flush();
+    }
+
+    /// @brief Write multiple records
+    void write_records(const std::vector<record>& records) {
+        for (std::size_t i = 0; i < records.size(); ++i) {
+            write_record(records[i]);
+        }
+    }
+
+private:
+    std::string filename_;
+    std::string version_;
+    std::ofstream file_;
+    std::vector<std::string> header_lines_;
+    std::vector<std::string> sample_names_;
+};
+
+} // namespace vcf
+} // namespace genetics
+} // namespace boost
+
+#endif // BOOST_GENETICS_VCF_HPP

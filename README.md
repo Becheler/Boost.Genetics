@@ -1,29 +1,24 @@
 # Boost.Genetics
 
-A lightweight, header-only C++ library for genetics datasets, inspired by Boost.Bloom. This library is designed as a prototype candidate for the Boost C++ Libraries, providing modular and efficient tools for working with genetic data.
+A lightweight, header-only C++ library for working with VCF (Variant Call Format) files, designed as a prototype candidate for the Boost C++ Libraries.
 
 ## Features
 
 - **Header-only**: No compilation required, just include and use
-- **Lightweight**: Minimal dependencies, no heavy tooling required
-- **Modular design**: Clear separation of concerns
+- **VCFv4.3 compliant**: Full support for the VCF specification
 - **Modern C++**: C++11 standard
 - **Well-tested**: Comprehensive test suite using Catch2
-- **Benchmarked**: Performance benchmarks using Google Benchmark
+- **Error context**: Detailed error messages with line numbers
 
-## Components
+## VCF Support
 
-### Sequence (`genetics/sequence.hpp`)
-Represents genetic sequences (DNA, RNA, or protein) with utilities for:
-- GC content calculation
-- Reverse complement generation
-- Sequence validation
-
-### Variant (`genetics/variant.hpp`)
-Represents genetic variants (SNPs, insertions, deletions) with utilities for:
-- Variant type detection
-- Transition/transversion classification
-- Chromosome and position tracking
+Complete implementation of the Variant Call Format specification (VCFv4.3):
+- **VCF file reading and writing**
+- **Full header metadata support**: INFO, FORMAT, FILTER, contig definitions
+- **Sample genotype data handling**: Multiple samples with arbitrary FORMAT fields
+- **Standard-compliant parsing**: SNPs, insertions, deletions, and complex variants
+- **Error handling**: Custom exceptions with line number context
+- **Missing value support**: Proper handling of `.` values
 
 ## Quick Start
 
@@ -32,23 +27,65 @@ Represents genetic variants (SNPs, insertions, deletions) with utilities for:
 Since this is a header-only library, simply include the headers you need:
 
 ```cpp
-#include <genetics/genetics.hpp>
+#include <genetics/vcf.hpp>
 #include <iostream>
 
 int main() {
     using namespace boost::genetics;
     
-    // Create a DNA sequence
-    sequence dna("ATCGATCG", sequence::type::DNA);
-    std::cout << "GC Content: " << dna.gc_content() * 100 << "%" << std::endl;
+    // Read VCF file
+    try {
+        vcf::reader reader("variants.vcf");
+        std::cout << "VCF version: " << reader.version() << std::endl;
+        
+        vcf::record rec;
+        while (reader.read_record(rec)) {
+            std::cout << rec.chrom() << ":" << rec.pos() 
+                      << " " << rec.ref() << ">" << rec.alt()[0] << std::endl;
+        }
+    } catch (const vcf::vcf_parse_error& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        std::cerr << "Line: " << e.line() << std::endl;
+    }
     
-    // Get reverse complement
-    sequence rc = dna.reverse_complement();
-    std::cout << "Reverse Complement: " << rc.data() << std::endl;
+    return 0;
+}
+```
+
+### Writing VCF Files
+
+```cpp
+#include <genetics/vcf.hpp>
+
+int main() {
+    using namespace boost::genetics;
     
-    // Create a variant
-    variant snp("chr1", 12345, "A", "G");
-    std::cout << "Is transition: " << snp.is_transition() << std::endl;
+    // Create writer
+    vcf::writer writer("output.vcf", "VCFv4.3");
+    
+    // Add metadata
+    writer.add_contig("chr1", 248956422);
+    writer.add_info("DP", "1", "Integer", "Total Depth");
+    writer.add_format("GT", "1", "String", "Genotype");
+    
+    std::vector<std::string> samples = {"Sample1", "Sample2"};
+    writer.set_sample_names(samples);
+    writer.write_header();
+    
+    // Create and write variant
+    std::vector<std::string> alt = {"G"};
+    std::map<std::string, std::string> info;
+    info["DP"] = "100";
+    
+    vcf::record rec("chr1", 12345, "rs123", "A", alt, 30.0, "PASS", info);
+    rec.set_format("GT");
+    
+    std::map<std::string, std::string> sample_data;
+    sample_data["GT"] = "0/1";
+    rec.add_sample(sample_data);
+    rec.add_sample(sample_data);
+    
+    writer.write_record(rec);
     
     return 0;
 }
@@ -70,9 +107,8 @@ make
 cmake -DBUILD_EXAMPLES=ON ..
 make
 
-# Run examples
-./sequence_example
-./variant_example
+# Run VCF example
+./vcf_example
 ```
 
 ### Running Tests
@@ -84,21 +120,8 @@ make
 
 # Run tests
 ctest --output-on-failure
-# Or run individual tests
-./test_sequence
-./test_variant
-```
-
-### Running Benchmarks
-
-```bash
-# Build benchmarks
-cmake -DBUILD_BENCHMARKS=ON ..
-make
-
-# Run benchmarks
-./benchmark_sequence
-./benchmark_variant
+# Or run directly
+./test_vcf
 ```
 
 ## Directory Structure
@@ -106,20 +129,16 @@ make
 ```
 Boost.Genetics/
 ├── include/genetics/     # Header-only library files
-│   ├── genetics.hpp      # Main header
+│   ├── genetics.hpp      # Main header (includes vcf.hpp)
 │   ├── version.hpp       # Version information
-│   ├── sequence.hpp      # Sequence class
-│   └── variant.hpp       # Variant class
+│   └── vcf.hpp           # VCF format support
 ├── examples/             # Example programs
-│   ├── sequence_example.cpp
-│   └── variant_example.cpp
+│   └── vcf_example.cpp
 ├── tests/                # Unit tests (Catch2)
 │   ├── catch2/           # Catch2 header
-│   ├── test_sequence.cpp
-│   └── test_variant.cpp
-├── benchmarks/           # Performance benchmarks (Google Benchmark)
-│   ├── benchmark_sequence.cpp
-│   └── benchmark_variant.cpp
+│   └── test_vcf.cpp
+├── doc/                  # Documentation
+│   └── assets/           # Specification documents
 ├── cmake/                # CMake configuration files
 └── CMakeLists.txt        # Build configuration
 ```
@@ -127,9 +146,8 @@ Boost.Genetics/
 ## Requirements
 
 - C++11 or later
-- CMake 3.14 or later (for building examples, tests, and benchmarks)
+- CMake 3.14 or later (for building examples and tests)
 - Catch2 (included as single-header in `tests/catch2/`)
-- Google Benchmark (optional, for benchmarks, will be fetched automatically)
 
 ## Installation
 
@@ -152,9 +170,10 @@ This is a prototype candidate library for Boost. Contributions are welcome!
 
 ## Roadmap
 
-Future features may include:
-- FASTA/FASTQ file readers
-- VCF file parsers
-- Sequence alignment utilities
-- Population genetics statistics
-- More comprehensive variant annotations
+- ✅ **VCFv4.3 text format** - Fully implemented
+- 🔄 **Phase 2 validation** - Type-safe INFO/FORMAT parsing
+- 📋 **Structural variants** - Support for `<DEL>`, `<INS>`, breakends
+- 📋 **gVCF support** - Reference blocks with `<*>` allele
+- 📋 **BCF binary format** - Binary compressed VCF
+- 📋 **BGZF compression** - Block compression support
+- 📋 **Tabix indexing** - Random access by genomic region
