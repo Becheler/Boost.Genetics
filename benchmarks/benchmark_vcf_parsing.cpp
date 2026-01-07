@@ -179,20 +179,31 @@ int main(int argc, char* argv[]) {
     std::cout << "Input file: " << vcf_file << "\n\n";
     
     try {
-        // Baseline: bcftools
-        std::cout << "Running bcftools baseline...\n";
-        auto bcftools_result = benchmark_bcftools(vcf_file);
-        print_result(bcftools_result);
-        std::cout << "\n";
+        // Baseline: bcftools (optional)
+        benchmark_result bcftools_result;
+        bool has_bcftools = false;
+        try {
+            std::cout << "Running bcftools baseline...\n";
+            bcftools_result = benchmark_bcftools(vcf_file);
+            print_result(bcftools_result);
+            std::cout << "\n";
+            has_bcftools = true;
+        } catch (const std::exception& e) {
+            std::cout << "bcftools not available (skipping baseline)\n\n";
+        }
         
         // Our parser without validation
         std::cout << "Running our parser...\n";
         auto parse_result = benchmark_parsing(vcf_file);
         print_result(parse_result);
         
-        double speedup = bcftools_result.elapsed_seconds / parse_result.elapsed_seconds;
-        std::cout << "Speedup vs bcftools: " << std::fixed << std::setprecision(2) 
-                  << speedup << "x\n\n";
+        if (has_bcftools) {
+            double speedup = bcftools_result.elapsed_seconds / parse_result.elapsed_seconds;
+            std::cout << "Speedup vs bcftools: " << std::fixed << std::setprecision(2) 
+                      << speedup << "x\n\n";
+        } else {
+            std::cout << "\n";
+        }
         
         // Our parser with validation
         std::cout << "Running our parser with validation...\n";

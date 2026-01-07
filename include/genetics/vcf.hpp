@@ -178,7 +178,7 @@ public:
     const std::string& filter() const { return filter_; }
     const std::map<std::string, std::string>& info() const { return info_; }
     const std::string& format() const { return format_; }
-    const std::vector<std::vector<std::string>>& samples() const { return samples_; }
+    const std::vector<std::vector<std::string_view>>& samples() const { return samples_; }
 
     // Setters
     void set_chrom(const std::string& chrom) { chrom_ = chrom; }
@@ -190,31 +190,43 @@ public:
     void set_filter(const std::string& filter) { filter_ = filter; }
     void set_info(const std::map<std::string, std::string>& info) { info_ = info; }
     void set_format(const std::string& format) { format_ = format; format_fields_.clear(); }
-    void set_samples(const std::vector<std::vector<std::string>>& samples) { samples_ = samples; }
+    void set_samples(const std::vector<std::vector<std::string_view>>& samples) { samples_ = samples; }
+    void set_line_buffer(std::shared_ptr<std::string> buffer) { line_buffer_ = buffer; }
 
     /// @brief Add an INFO field entry
     void add_info(const std::string& key, const std::string& value) {
         info_[key] = value;
     }
 
-    /// @brief Add a sample with genotype data (indexed by format fields)
-    void add_sample(const std::vector<std::string>& sample_values) {
+    /// @brief Add a sample with genotype data (indexed by format fields, zero-copy)
+    void add_sample(const std::vector<std::string_view>& sample_values) {
         samples_.push_back(sample_values);
     }
     
     /// @brief Add a sample with genotype data (backwards compatibility with map)
-    /// Values ordered according to format_ field
+    /// Note: Creates temporary strings, not zero-copy
     void add_sample(const std::map<std::string, std::string>& sample_data) {
+        // For backward compatibility, we need to store these somewhere
+        // This won't be zero-copy but maintains API compatibility
+        if (!line_buffer_) {
+            line_buffer_ = std::make_shared<std::string>();
+        }
+        
         const std::vector<std::string>& format_fields = get_format_fields();
-        std::vector<std::string> values;
+        std::vector<std::string_view> values;
         values.reserve(format_fields.size());
         
+        std::size_t start_pos = line_buffer_->size();
         for (const std::string& field : format_fields) {
             auto it = sample_data.find(field);
             if (it != sample_data.end()) {
-                values.push_back(it->second);
+                std::size_t pos = line_buffer_->size();
+                *line_buffer_ += it->second + '\0';
+                values.emplace_back(line_buffer_->data() + pos, it->second.size());
             } else {
-                values.push_back(".");
+                std::size_t pos = line_buffer_->size();
+                *line_buffer_ += ".\0";
+                values.emplace_back(line_buffer_->data() + pos, 1);
             }
         }
         samples_.push_back(std::move(values));
@@ -226,7 +238,7 @@ public:
     /// @return Value or empty string if out of bounds
     std::string get_sample_value(std::size_t sample_idx, std::size_t field_idx) const {
         if (sample_idx < samples_.size() && field_idx < samples_[sample_idx].size()) {
-            return samples_[sample_idx][field_idx];
+            return std::string(samples_[sample_idx][field_idx]);
         }
         return "";
     }
@@ -505,7 +517,7 @@ public:
         if (!format_.empty() && !samples_.empty()) {
             oss << "\t" << format_;
             
-            // Samples stored as indexed values, output directly
+            // Samples stored as indexed string_views, output directly
             for (std::size_t i = 0; i < samples_.size(); ++i) {
                 oss << "\t";
                 for (std::size_t j = 0; j < samples_[i].size(); ++j) {
@@ -528,7 +540,8 @@ private:
     std::string filter_;
     std::map<std::string, std::string> info_;
     std::string format_;
-    std::vector<std::vector<std::string>> samples_;  // Indexed by format_fields_
+    std::shared_ptr<std::string> line_buffer_;  // Keep source alive for string_views
+    std::vector<std::vector<std::string_view>> samples_;  // Zero-copy indexed storage
     mutable std::vector<std::string> format_fields_; // Cached parsed format
 
     /// @brief Convert INFO map to string format (for SV parsing)
@@ -800,8 +813,12 @@ private:
     }
 
     bool parse_record(const std::string& line, record& rec) {
-        // Use zero-copy parsing with string_view
-        std::string_view line_view(line);
+        // Keep line buffer alive for string_view references
+        auto line_buffer = std::make_shared<std::string>(line);
+        rec.set_line_buffer(line_buffer);
+        
+        // Use zero-copy parsing with string_view pointing into line_buffer
+        std::string_view line_view(*line_buffer);
         detail::field_extractor fields(line_view);
         
         // Extract required fields (zero-copy)
@@ -861,28 +878,22 @@ private:
         }
         rec.set_info(info_map);
         
-        // Parse FORMAT and sample data if present
+        // Parse FORMAT and sample data if present (ZERO-COPY with string_view!)
         if (fields.has_more()) {
             std::string_view format_view = fields.next();
             rec.set_format(std::string(format_view));
             
-            // Extract format field names
-            std::vector<std::string> format_fields;
-            detail::split_view(format_view, ':', [&format_fields](std::string_view field) {
-                format_fields.emplace_back(field);
-            });
-            
-            // Parse each sample - indexed storage (no key duplication!)
-            std::vector<std::vector<std::string>> samples;
+            // Parse each sample - zero-copy string_view storage
+            std::vector<std::vector<std::string_view>> samples;
             samples.reserve(10);  // Reserve space for typical sample count
             
             while (fields.has_more()) {
                 std::string_view sample_view = fields.next();
-                std::vector<std::string> sample_values;
-                sample_values.reserve(format_fields.size());
+                std::vector<std::string_view> sample_values;
+                sample_values.reserve(8);  // Typical number of FORMAT fields
                 
                 detail::split_view(sample_view, ':', [&](std::string_view value) {
-                    sample_values.emplace_back(value);
+                    sample_values.push_back(value);
                 });
                 
                 samples.push_back(std::move(sample_values));
