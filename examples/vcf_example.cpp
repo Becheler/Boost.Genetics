@@ -181,14 +181,13 @@ int main() {
             
             // Display genotype data
             const auto& samples_data = rec.samples();
+            const auto& format_fields = rec.get_format_fields();
             for (std::size_t j = 0; j < samples_data.size(); ++j) {
                 std::cout << "  " << sample_names[j] << ": ";
                 const auto& sample = samples_data[j];
-                bool first_field = true;
-                for (const auto& kv : sample) {
-                    if (!first_field) std::cout << " ";
-                    std::cout << kv.first << "=" << kv.second;
-                    first_field = false;
+                for (std::size_t k = 0; k < sample.size() && k < format_fields.size(); ++k) {
+                    if (k > 0) std::cout << " ";
+                    std::cout << format_fields[k] << "=" << sample[k];
                 }
                 std::cout << std::endl;
             }

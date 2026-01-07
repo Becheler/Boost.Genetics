@@ -12,13 +12,6 @@
 
 using namespace boost::genetics;
 
-// Helper function to find value in sample vector
-std::string find_in_sample(const std::vector<std::pair<std::string, std::string>>& sample, const std::string& key) {
-    auto it = std::find_if(sample.begin(), sample.end(),
-        [&key](const std::pair<std::string, std::string>& kv) { return kv.first == key; });
-    return (it != sample.end()) ? it->second : "";
-}
-
 TEST_CASE("VCF record creation and basic operations", "[vcf]") {
     SECTION("Default constructor") {
         vcf::record rec;
@@ -275,8 +268,8 @@ TEST_CASE("VCF sample data operations", "[vcf]") {
         rec.add_sample(sample2);
         
         REQUIRE(rec.samples().size() == 2);
-        REQUIRE(find_in_sample(rec.samples()[0], "GT") == "0/1");
-        REQUIRE(find_in_sample(rec.samples()[1], "GT") == "1/1");
+        REQUIRE(rec.get_sample_value(0, "GT") == "0/1");
+        REQUIRE(rec.get_sample_value(1, "GT") == "1/1");
     }
 }
 
@@ -331,14 +324,14 @@ TEST_CASE("VCF missing genotype values (Spec Example 2.5)", "[vcf]") {
     REQUIRE(rec.samples().size() == 2);
     
     // S1: GT=0/1, GQ=., DP=10
-    REQUIRE(find_in_sample(rec.samples()[0], "GT") == "0/1");
-    REQUIRE(find_in_sample(rec.samples()[0], "GQ") == ".");
-    REQUIRE(find_in_sample(rec.samples()[0], "DP") == "10");
+    REQUIRE(rec.get_sample_value(0, "GT") == "0/1");
+    REQUIRE(rec.get_sample_value(0, "GQ") == ".");
+    REQUIRE(rec.get_sample_value(0, "DP") == "10");
     
     // S2: GT=./., GQ=20, DP=.
-    REQUIRE(find_in_sample(rec.samples()[1], "GT") == "./.");
-    REQUIRE(find_in_sample(rec.samples()[1], "GQ") == "20");
-    REQUIRE(find_in_sample(rec.samples()[1], "DP") == ".");
+    REQUIRE(rec.get_sample_value(1, "GT") == "./.");
+    REQUIRE(rec.get_sample_value(1, "GQ") == "20");
+    REQUIRE(rec.get_sample_value(1, "DP") == ".");
     
     std::remove(test_file.c_str());
 }
@@ -362,17 +355,17 @@ TEST_CASE("VCF phased genotypes (Spec Example 2.6)", "[vcf]") {
     
     vcf::record rec1;
     REQUIRE(reader.read_record(rec1));
-    REQUIRE(find_in_sample(rec1.samples()[0], "GT") == "0|1");
-    REQUIRE(find_in_sample(rec1.samples()[0], "PS") == "100");
+    REQUIRE(rec1.get_sample_value(0, "GT") == "0|1");
+    REQUIRE(rec1.get_sample_value(0, "PS") == "100");
     
     vcf::record rec2;
     REQUIRE(reader.read_record(rec2));
-    REQUIRE(find_in_sample(rec2.samples()[0], "GT") == "1|0");
-    REQUIRE(find_in_sample(rec2.samples()[0], "PS") == "100");
+    REQUIRE(rec2.get_sample_value(0, "GT") == "1|0");
+    REQUIRE(rec2.get_sample_value(0, "PS") == "100");
     
     vcf::record rec3;
     REQUIRE(reader.read_record(rec3));
-    REQUIRE(find_in_sample(rec3.samples()[0], "GT") == "0/1");
+    REQUIRE(rec3.get_sample_value(0, "GT") == "0/1");
     // No PS field in this record
     
     std::remove(test_file.c_str());
