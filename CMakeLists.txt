@@ -46,6 +46,20 @@ if(BUILD_TESTS)
     target_link_libraries(test_vcf PRIVATE boost_genetics)
     target_include_directories(test_vcf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     add_test(NAME test_vcf COMMAND test_vcf)
+    
+    add_executable(test_validation tests/test_validation.cpp)
+    target_link_libraries(test_validation PRIVATE boost_genetics)
+    target_include_directories(test_validation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    add_test(NAME test_validation COMMAND test_validation WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
+# Option to build benchmarks
+option(BUILD_BENCHMARKS "Build benchmarks" OFF)
+
+# Benchmarks
+if(BUILD_BENCHMARKS)
+    add_executable(benchmark_vcf_parsing benchmarks/benchmark_vcf_parsing.cpp)
+    target_link_libraries(benchmark_vcf_parsing PRIVATE boost_genetics)
 endif()
 
 # Installation
