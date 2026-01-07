@@ -26,6 +26,57 @@ namespace genetics {
 namespace vcf {
 
 // ============================================================================
+// MEMORY ARENA ALLOCATOR
+// ============================================================================
+
+/// @brief Fast bump-pointer string allocator for VCF parsing
+/// Eliminates per-record malloc overhead by allocating from pre-allocated buffer
+class string_arena {
+public:
+    explicit string_arena(std::size_t capacity = 100 * 1024 * 1024)  // 100 MB default
+        : buffer_(capacity), offset_(0) {}
+    
+    /// @brief Allocate string from arena (bump-pointer, very fast)
+    /// @return string_view pointing into arena memory
+    std::string_view allocate(std::string_view src) {
+        if (offset_ + src.size() > buffer_.size()) {
+            // Arena full - grow it (doubles size)
+            std::size_t new_size = buffer_.size() * 2;
+            while (offset_ + src.size() > new_size) {
+                new_size *= 2;
+            }
+            buffer_.resize(new_size);
+        }
+        
+        char* dest = buffer_.data() + offset_;
+        std::memcpy(dest, src.data(), src.size());
+        std::string_view result(dest, src.size());
+        offset_ += src.size();
+        return result;
+    }
+    
+    /// @brief Move string into arena (avoids copy if possible)
+    /// @return string_view pointing into arena memory
+    std::string_view allocate(std::string&& src) {
+        // Try to move string data into arena
+        // For small strings this is still a copy, but for large ones we can optimize
+        return allocate(std::string_view(src));  // For now, still copy
+        // TODO: Could optimize by stealing string's buffer if it's large enough
+    }
+    
+    /// @brief Reset arena for reuse (doesn't free memory, just resets pointer)
+    void reset() { offset_ = 0; }
+    
+    /// @brief Get current memory usage
+    std::size_t bytes_used() const { return offset_; }
+    std::size_t capacity() const { return buffer_.size(); }
+    
+private:
+    std::vector<char> buffer_;
+    std::size_t offset_;
+};
+
+// ============================================================================
 // FAST PARSING UTILITIES
 // ============================================================================
 
@@ -569,8 +620,9 @@ class reader {
 public:
     /// @brief Constructor
     /// @param filename Path to VCF file
-    explicit reader(const std::string& filename) 
-        : filename_(filename), line_number_(0), buffer_(1024 * 1024) {  // 1MB buffer
+    /// @param arena_size Size of memory arena for fast allocation (default 100 MB)
+    explicit reader(const std::string& filename, std::size_t arena_size = 100 * 1024 * 1024) 
+        : filename_(filename), line_number_(0), buffer_(1024 * 1024), arena_(arena_size) {
         file_.open(filename_.c_str());
         if (!file_.is_open()) {
             throw std::runtime_error("Cannot open VCF file: " + filename_);
@@ -625,7 +677,8 @@ public:
             // Skip header lines (should not happen after read_header, but be safe)
             if (line[0] == '#') continue;
             
-            return parse_record(line, rec);
+            // Parse with move to potentially avoid copy
+            return parse_record(std::move(line), rec);
         }
         return false;
     }
@@ -671,6 +724,7 @@ private:
     std::vector<std::string> header_lines_;
     std::vector<std::string> sample_names_;
     std::vector<char> buffer_;  // I/O buffer for faster reading
+    string_arena arena_;  // Memory arena for fast allocation
     
     // Phase 2: Structured metadata
     std::map<std::string, info_meta> info_defs_;
@@ -812,13 +866,11 @@ private:
         }
     }
 
-    bool parse_record(const std::string& line, record& rec) {
-        // Keep line buffer alive for string_view references
-        auto line_buffer = std::make_shared<std::string>(line);
-        rec.set_line_buffer(line_buffer);
+    bool parse_record(std::string&& line, record& rec) {
+        // Allocate line into arena (fast bump-pointer allocation)
+        std::string_view line_view = arena_.allocate(std::move(line));
         
-        // Use zero-copy parsing with string_view pointing into line_buffer
-        std::string_view line_view(*line_buffer);
+        // Use zero-copy parsing with string_view pointing into arena
         detail::field_extractor fields(line_view);
         
         // Extract required fields (zero-copy)

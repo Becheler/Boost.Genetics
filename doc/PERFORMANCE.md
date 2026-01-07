@@ -99,9 +99,16 @@ class record {
 ```
 **Result**: ✅ 4,030 → 4,300 rec/s (+6.7%) - eliminated ~200M sample allocations
 
-**Combined**: Indexed + zero-copy = **13.5% gain** (3,790 → 4,300 rec/s)
+**Combined**: Indexed + zero-copy + arena = **18.3x from baseline** (234 → 4,275 rec/s)
 
-#### 3. Memory Arena Allocator (50% gain - 1 day)
+#### ✅ **Phase 3: Memory Arena Allocator** (Completed)
+
+**Strategy**: Bump-pointer allocation from pre-allocated buffer
+**Result**: ✅ 4,300 → 4,275 rec/s (no significant gain)
+**Allocations**: 6,272 shared_ptr → 1 arena (99.98% reduction)
+**Conclusion**: Memory allocation is no longer the bottleneck
+
+
 **Problem**: Millions of individual heap allocations  
 **Solution**: Bump-pointer allocation from pre-allocated buffer
 ```cpp
@@ -215,8 +222,9 @@ Baseline (Jan 2026):     234 rec/s  ████░░░░░░░░░░�
 + vector samples:      3,790 rec/s  ██████████████████████████ 32.6%
 + indexed format:      4,030 rec/s  ████████████████████████████ 34.7%
 + zero-copy samples:   4,300 rec/s  ███████████████████████████████ 37.0%
-→ Next (arena):       ~9,300 rec/s  ██████████████████████████████████████████ 80.1%
-bcftools baseline:    11,611 rec/s  ████████████████████████████████████████████ 100%
++ arena allocator:     4,275 rec/s  ███████████████████████████████ 36.8%
+→ Next (TBD):         ~7,000 rec/s  ████████████████████████████████████████ 60%
+bcftools baseline:    12,167 rec/s  ████████████████████████████████████████████ 100%
 ```
 
 ## Notes
