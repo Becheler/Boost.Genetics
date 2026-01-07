@@ -5,6 +5,7 @@
 #define CATCH_CONFIG_MAIN
 #include "catch2/catch.hpp"
 #include <genetics/vcf.hpp>
+#include <genetics/bcf.hpp>
 #include <sstream>
 #include <fstream>
 
@@ -1258,4 +1259,146 @@ TEST_CASE("INFO/FORMAT key validation against header", "[vcf][validation]") {
     }
     
     std::remove(test_file.c_str());
+}
+
+// ============================================================================
+// BCF BINARY FORMAT TESTS
+// ============================================================================
+
+TEST_CASE("BCF type descriptor", "[bcf]") {
+    using namespace boost::genetics::bcf;
+    
+    SECTION("Make type descriptor") {
+        uint8_t desc = make_type_descriptor(bcf_type::INT8, 3);
+        REQUIRE(get_type(desc) == bcf_type::INT8);
+        REQUIRE(get_size(desc) == 3);
+    }
+    
+    SECTION("Overflow size (15)") {
+        uint8_t desc = make_type_descriptor(bcf_type::INT16, 20);
+        REQUIRE(get_type(desc) == bcf_type::INT16);
+        REQUIRE(get_size(desc) == 15);  // Indicates overflow
+    }
+    
+    SECTION("Single element") {
+        uint8_t desc = make_type_descriptor(bcf_type::FLOAT, 1);
+        REQUIRE(get_type(desc) == bcf_type::FLOAT);
+        REQUIRE(get_size(desc) == 1);
+    }
+}
+
+TEST_CASE("BCF genotype encoding", "[bcf]") {
+    using namespace boost::genetics::bcf;
+    
+    SECTION("Encode 0/0") {
+        std::vector<uint8_t> encoded = encode_genotype("0/0");
+        REQUIRE(encoded.size() == 2);
+        REQUIRE(encoded[0] == 0x02);  // (0+1)<<1 | 0 = 2
+        REQUIRE(encoded[1] == 0x02);
+    }
+    
+    SECTION("Encode 0/1") {
+        std::vector<uint8_t> encoded = encode_genotype("0/1");
+        REQUIRE(encoded.size() == 2);
+        REQUIRE(encoded[0] == 0x02);  // (0+1)<<1 | 0 = 2
+        REQUIRE(encoded[1] == 0x04);  // (1+1)<<1 | 0 = 4
+    }
+    
+    SECTION("Encode 1|0 (phased)") {
+        std::vector<uint8_t> encoded = encode_genotype("1|0");
+        REQUIRE(encoded.size() == 2);
+        REQUIRE(encoded[0] == 0x04);  // (1+1)<<1 | 0 = 4
+        REQUIRE(encoded[1] == 0x03);  // (0+1)<<1 | 1 = 3
+    }
+    
+    SECTION("Encode ./. (missing)") {
+        std::vector<uint8_t> encoded = encode_genotype("./.");
+        REQUIRE(encoded.size() == 2);
+        REQUIRE(encoded[0] == 0x00);
+        REQUIRE(encoded[1] == 0x00);
+    }
+    
+    SECTION("Encode haploid") {
+        std::vector<uint8_t> encoded = encode_genotype("1");
+        REQUIRE(encoded.size() == 1);
+        REQUIRE(encoded[0] == 0x04);
+    }
+}
+
+TEST_CASE("BCF genotype decoding", "[bcf]") {
+    using namespace boost::genetics::bcf;
+    
+    SECTION("Decode 0/0") {
+        std::vector<uint8_t> data = {0x02, 0x02};
+        std::string gt = decode_genotype(data);
+        REQUIRE(gt == "0/0");
+    }
+    
+    SECTION("Decode 0/1") {
+        std::vector<uint8_t> data = {0x02, 0x04};
+        std::string gt = decode_genotype(data);
+        REQUIRE(gt == "0/1");
+    }
+    
+    SECTION("Decode 1|0 (phased)") {
+        std::vector<uint8_t> data = {0x04, 0x03};
+        std::string gt = decode_genotype(data);
+        REQUIRE(gt == "1|0");
+    }
+    
+    SECTION("Decode ./. (missing)") {
+        std::vector<uint8_t> data = {0x00, 0x00};
+        std::string gt = decode_genotype(data);
+        REQUIRE(gt == "./.");
+    }
+}
+
+TEST_CASE("BCF header read/write", "[bcf]") {
+    using namespace boost::genetics::bcf;
+    
+    SECTION("Write and read header") {
+        const std::string vcf_header = "##fileformat=VCFv4.3\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO";
+        
+        // Write header
+        std::ostringstream out;
+        bcf_header write_header;
+        write_header.text = vcf_header;
+        REQUIRE(write_bcf_header(out, write_header));
+        
+        // Read header back
+        std::istringstream in(out.str());
+        bcf_header read_header;
+        REQUIRE(read_bcf_header(in, read_header));
+        
+        // Verify
+        REQUIRE(read_header.major_version == BCF_MAJOR_VERSION);
+        REQUIRE(read_header.minor_version == BCF_MINOR_VERSION);
+        REQUIRE(read_header.text == vcf_header);
+    }
+    
+    SECTION("Invalid magic bytes") {
+        std::istringstream in("XYZ");
+        bcf_header header;
+        REQUIRE_FALSE(read_bcf_header(in, header));
+    }
+}
+
+TEST_CASE("BCF special values", "[bcf]") {
+    using namespace boost::genetics::bcf;
+    
+    SECTION("INT8 special values") {
+        REQUIRE(is_bcf_missing_int8(bcf_int_special::INT8_MISSING));
+        REQUIRE(is_bcf_eov_int8(bcf_int_special::INT8_EOV));
+        REQUIRE_FALSE(is_bcf_missing_int8(10));
+    }
+    
+    SECTION("INT16 special values") {
+        REQUIRE(is_bcf_missing_int16(bcf_int_special::INT16_MISSING));
+        REQUIRE(is_bcf_eov_int16(bcf_int_special::INT16_EOV));
+    }
+    
+    SECTION("INT32 special values") {
+        REQUIRE(is_bcf_missing_int32(bcf_int_special::INT32_MISSING));
+        REQUIRE(is_bcf_eov_int32(bcf_int_special::INT32_EOV));
+    }
 }

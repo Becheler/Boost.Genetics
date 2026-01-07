@@ -53,6 +53,15 @@ Complete implementation of the Variant Call Format specification (VCFv4.3):
 - **Record validation**: Comprehensive record validation with detailed error reporting
 - **Validation result API**: Accumulate and query validation errors
 
+### BCF Binary Format (Complete)
+- **BCF v2.2 header parsing**: Read/write BCF magic bytes, version, VCF header text
+- **Type encoding/decoding**: Support for INT8, INT16, INT32, FLOAT, CHAR types
+- **Type descriptors**: Size and type encoding with overflow handling
+- **Genotype encoding**: VCF genotype string (e.g., "0/1", "1|0") to BCF binary format
+- **Special values**: MISSING, END_OF_VECTOR markers for integers and floats
+- **BGZF compression**: Optional Boost.IOStreams integration for compressed BCF files
+- **Conditional compilation**: Automatically enables BCF file I/O if Boost.IOStreams + zlib available
+
 ## Quick Start
 
 ### Using the Library
@@ -182,6 +191,12 @@ Boost.Genetics/
 - CMake 3.14 or later (for building examples and tests)
 - Catch2 (included as single-header in `tests/catch2/`)
 
+### Optional Dependencies (for BCF support)
+- Boost.IOStreams (for BGZF compression)
+- zlib (for gzip compression)
+
+If Boost.IOStreams and zlib are found, BCF file I/O is automatically enabled. Otherwise, the library provides BCF encoding/decoding utilities but not file I/O.
+
 ## Installation
 
 As a header-only library, you can simply copy the `include/genetics/` directory to your project or install system-wide:
@@ -208,6 +223,6 @@ This is a prototype candidate library for Boost. Contributions are welcome!
 - ✅ **Phase 3: Structural variants** - Support for `<DEL>`, `<INS>`, breakends, SVTYPE/END/SVLEN
 - ✅ **Phase 4: gVCF support** - Reference blocks with `<*>` allele, END field, MIN_DP
 - ✅ **Validation** - Comprehensive VCF v4.3 spec compliance validation
-- 📋 **Phase 5: BCF binary format** - Binary compressed VCF (requires external dependencies)
-- 📋 **Phase 6: BGZF compression** - Block compression support
-- 📋 **Phase 7: Tabix indexing** - Random access by genomic region
+- ✅ **BCF binary format** - Type encoding, genotype encoding, BGZF compression (optional)
+- 📋 **Performance optimizations** - Memory pooling, lazy parsing, parallel processing
+- 📋 **Advanced features** - Tabix indexing, region queries, VCF merging

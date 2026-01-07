@@ -6,12 +6,25 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Find dependencies
+find_package(Boost COMPONENTS iostreams)
+find_package(ZLIB)
+
 # Header-only library
 add_library(boost_genetics INTERFACE)
 target_include_directories(boost_genetics INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
+
+# Optional BCF support with Boost.IOStreams and zlib
+if(Boost_FOUND AND ZLIB_FOUND)
+    message(STATUS "Boost.IOStreams and zlib found - enabling BCF support")
+    target_compile_definitions(boost_genetics INTERFACE BOOST_GENETICS_HAS_IOSTREAMS)
+    target_link_libraries(boost_genetics INTERFACE Boost::iostreams ZLIB::ZLIB)
+else()
+    message(STATUS "Boost.IOStreams or zlib not found - BCF support disabled (text VCF only)")
+endif()
 
 # Option to build examples
 option(BUILD_EXAMPLES "Build examples" ON)
