@@ -78,8 +78,8 @@ jobs:
       run: |
         mkdir -p _site
         
-        # Create index page
-        cat > _site/index.html << 'EOF'
+        # Create index page - using HTMLEOF to avoid conflicts
+        cat > _site/index.html <<'HTMLEOF'
         <!DOCTYPE html>
         <html lang="en">
         <head>
@@ -167,20 +167,16 @@ jobs:
                 </ul>
                 
                 <h2>Quick Start</h2>
-                <pre><code>#include &lt;boost/genetics/vcf.hpp&gt;
-
-using namespace boost::genetics;
-
-// Sequential parsing
+                <pre><code>// Sequential parsing
 vcf::reader reader("variants.vcf");
-for (const auto& record : reader) {
-    std::cout << record.chrom() << ":" << record.pos() << std::endl;
+for (const auto&amp; record : reader) {
+    std::cout &lt;&lt; record.chrom() &lt;&lt; ":" &lt;&lt; record.pos() &lt;&lt; std::endl;
 }
 
 // Parallel parsing (4 threads)
 vcf::parallel_reader parallel("variants.vcf", 4);
 auto records = parallel.read_all_unordered();
-std::cout << "Parsed " << records.size() << " records" << std::endl;</code></pre>
+std::cout &lt;&lt; "Parsed " &lt;&lt; records.size() &lt;&lt; " records" &lt;&lt; std::endl;</code></pre>
                 
                 <div id="benchmarks"></div>
                 
@@ -214,7 +210,7 @@ std::cout << "Parsed " << records.size() << " records" << std::endl;</code></pre
             </script>
         </body>
         </html>
-        EOF
+        HTMLEOF
         
         # Convert markdown docs to HTML
         pandoc README.md -o _site/README.html --standalone --metadata title="Boost.Genetics README" || cp README.md _site/
