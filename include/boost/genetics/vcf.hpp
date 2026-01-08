@@ -960,7 +960,7 @@ private:
         // Set basic fields (zero-copy with string_view)
         rec.set_chrom(chrom_view);
         rec.set_pos(detail::parse_uint_fast(pos_view));
-        rec.set_id(id_view == "." ? std::string_view() : id_view);
+        rec.set_id(id_view);  // Keep "." as-is for compatibility with bcftools
         rec.set_ref(ref_view);
         
         // Parse ALT alleles (zero-copy split, then convert to strings)

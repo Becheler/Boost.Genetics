@@ -189,7 +189,7 @@ TEST_CASE("VCF reader functionality", "[vcf]") {
         REQUIRE(reader.read_record(rec2));
         REQUIRE(rec2.chrom() == "chr1");
         REQUIRE(rec2.pos() == 67890);
-        REQUIRE(rec2.id().empty());
+        REQUIRE(rec2.id() == ".");  // Keep "." as-is for bcftools compatibility
         
         vcf::record rec3;
         REQUIRE_FALSE(reader.read_record(rec3)); // No more records
