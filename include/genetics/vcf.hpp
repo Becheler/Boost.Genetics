@@ -16,6 +16,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <cctype>
+#include <thread>
+#include <future>
+#include <mutex>
 #include <genetics/vcf_gvcf.hpp>
 #include <genetics/vcf_metadata.hpp>
 #include <genetics/vcf_structural_variants.hpp>
@@ -62,6 +65,12 @@ public:
         // For small strings this is still a copy, but for large ones we can optimize
         return allocate(std::string_view(src));  // For now, still copy
         // TODO: Could optimize by stealing string's buffer if it's large enough
+    }
+    
+    /// @brief Allocate string_view directly (alias for allocate)
+    /// @return string_view pointing into arena memory  
+    std::string_view allocate_view(std::string_view src) {
+        return allocate(src);
     }
     
     /// @brief Reset arena for reuse (doesn't free memory, just resets pointer)
@@ -1120,6 +1129,245 @@ private:
     std::ofstream file_;
     std::vector<std::string> header_lines_;
     std::vector<std::string> sample_names_;
+};
+
+/// @brief Parallel VCF file reader for high-performance parsing
+/// Uses multiple threads to parse different chunks of the file simultaneously
+class parallel_reader {
+public:
+    /// @brief Constructor
+    /// @param filename Path to VCF file
+    /// @param num_threads Number of parsing threads (default: hardware concurrency)
+    /// @param chunk_size Size of each chunk in bytes (default: 10 MB)
+    explicit parallel_reader(const std::string& filename, 
+                            std::size_t num_threads = 0,
+                            std::size_t chunk_size = 10 * 1024 * 1024)
+        : filename_(filename)
+        , num_threads_(num_threads == 0 ? std::thread::hardware_concurrency() : num_threads)
+        , chunk_size_(chunk_size)
+        , header_read_(false)
+    {
+        if (num_threads_ == 0) num_threads_ = 1;
+    }
+
+    /// @brief Read header and prepare for parallel parsing
+    void read_header() {
+        if (header_read_) return;
+        
+        std::ifstream file(filename_);
+        if (!file.is_open()) {
+            throw std::runtime_error("Cannot open VCF file: " + filename_);
+        }
+        
+        std::string line;
+        while (std::getline(file, line)) {
+            if (line.empty()) continue;
+            if (line[0] != '#') {
+                // Found first data line, record position
+                data_start_pos_ = file.tellg();
+                data_start_pos_ -= (line.length() + 1);
+                break;
+            }
+            header_lines_.push_back(line);
+        }
+        
+        header_read_ = true;
+    }
+
+    /// @brief Read all records in parallel (unordered for maximum speed)
+    /// @param arena_size Size of arena per thread (default: 100 MB)
+    /// @return Vector of parsed records (order not guaranteed)
+    std::vector<record> read_all_unordered(std::size_t arena_size = 100 * 1024 * 1024) {
+        if (!header_read_) read_header();
+        
+        // Get file size
+        std::ifstream file(filename_, std::ios::binary | std::ios::ate);
+        std::size_t file_size = file.tellg();
+        file.close();
+        
+        std::size_t data_size = file_size - data_start_pos_;
+        std::size_t num_chunks = (data_size + chunk_size_ - 1) / chunk_size_;
+        
+        // Limit chunks to number of threads for efficiency
+        if (num_chunks > num_threads_ * 2) {
+            num_chunks = num_threads_ * 2;
+            chunk_size_ = (data_size + num_chunks - 1) / num_chunks;
+        }
+        
+        // Launch parsing threads
+        std::vector<std::future<std::vector<record>>> futures;
+        futures.reserve(num_chunks);
+        
+        for (std::size_t i = 0; i < num_chunks; ++i) {
+            std::size_t chunk_start = data_start_pos_ + i * chunk_size_;
+            std::size_t chunk_end = std::min(chunk_start + chunk_size_, file_size);
+            
+            futures.push_back(std::async(std::launch::async, 
+                [this, chunk_start, chunk_end, arena_size]() {
+                    return parse_chunk(chunk_start, chunk_end, arena_size);
+                }));
+        }
+        
+        // Collect results
+        std::vector<record> all_records;
+        for (auto& future : futures) {
+            std::vector<record> chunk_records = future.get();
+            all_records.insert(all_records.end(), 
+                             std::make_move_iterator(chunk_records.begin()),
+                             std::make_move_iterator(chunk_records.end()));
+        }
+        
+        return all_records;
+    }
+
+    /// @brief Get header lines
+    const std::vector<std::string>& header_lines() const { return header_lines_; }
+
+private:
+    /// @brief Parse a chunk of the file
+    std::vector<record> parse_chunk(std::size_t start_pos, std::size_t end_pos, 
+                                    std::size_t arena_size) {
+        std::ifstream file(filename_, std::ios::binary);
+        file.seekg(start_pos);
+        
+        // Read chunk into memory
+        std::size_t chunk_len = end_pos - start_pos;
+        std::vector<char> buffer(chunk_len + 1);
+        file.read(buffer.data(), chunk_len);
+        std::size_t bytes_read = file.gcount();
+        buffer[bytes_read] = '\0';
+        
+        // Adjust start: skip partial line at beginning (unless first chunk)
+        std::size_t parse_start = 0;
+        if (start_pos > data_start_pos_) {
+            while (parse_start < bytes_read && buffer[parse_start] != '\n') {
+                ++parse_start;
+            }
+            if (parse_start < bytes_read) ++parse_start; // Skip the newline
+        }
+        
+        // Adjust end: read until complete line
+        std::size_t parse_end = bytes_read;
+        if (end_pos < file.seekg(0, std::ios::end).tellg()) {
+            // Not the last chunk - find last complete line
+            while (parse_end > parse_start && buffer[parse_end - 1] != '\n') {
+                --parse_end;
+            }
+        }
+        
+        // Create thread-local arena
+        string_arena arena(arena_size);
+        std::vector<record> records;
+        records.reserve(8000); // Typical chunk has ~8000 records
+        
+        // Parse lines in this chunk
+        std::size_t line_start = parse_start;
+        for (std::size_t i = parse_start; i < parse_end; ++i) {
+            if (buffer[i] == '\n') {
+                if (i > line_start && buffer[line_start] != '#') {
+                    // Parse this line
+                    std::string_view line_view(buffer.data() + line_start, i - line_start);
+                    record rec;
+                    if (parse_line(line_view, rec, arena)) {
+                        records.push_back(std::move(rec));
+                    }
+                }
+                line_start = i + 1;
+            }
+        }
+        
+        // Handle last line if no trailing newline
+        if (line_start < parse_end && buffer[line_start] != '#') {
+            std::string_view line_view(buffer.data() + line_start, parse_end - line_start);
+            record rec;
+            if (parse_line(line_view, rec, arena)) {
+                records.push_back(std::move(rec));
+            }
+        }
+        
+        return records;
+    }
+
+    /// @brief Parse a single line into a record
+    bool parse_line(std::string_view line, record& rec, string_arena& arena) {
+        if (line.empty()) return false;
+        
+        // Allocate line into arena
+        std::string_view arena_line = arena.allocate_view(line);
+        
+        // Use zero-copy parsing
+        detail::field_extractor fields(arena_line);
+        
+        // Extract required fields
+        std::string_view chrom_view = fields.next();
+        std::string_view pos_view = fields.next();
+        std::string_view id_view = fields.next();
+        std::string_view ref_view = fields.next();
+        std::string_view alt_view = fields.next();
+        std::string_view qual_view = fields.next();
+        std::string_view filter_view = fields.next();
+        std::string_view info_view = fields.next();
+        
+        if (chrom_view.empty() || pos_view.empty()) return false;
+        
+        // Set basic fields
+        rec.set_chrom(chrom_view);
+        rec.set_pos(detail::parse_uint_fast(pos_view));
+        rec.set_id(id_view == "." ? std::string_view() : id_view);
+        rec.set_ref(ref_view);
+        
+        // Parse ALT
+        std::vector<std::string> alt_alleles;
+        if (alt_view != ".") {
+            detail::split_view(alt_view, ',', [&alt_alleles](std::string_view allele) {
+                alt_alleles.emplace_back(allele);
+            });
+        }
+        rec.set_alt(alt_alleles);
+        
+        // Parse QUAL
+        if (qual_view != ".") {
+            rec.set_qual(detail::parse_double_fast(qual_view));
+        } else {
+            rec.set_qual(0.0);
+        }
+        
+        // Set FILTER and INFO
+        rec.set_filter(filter_view == "." ? std::string_view() : filter_view);
+        rec.set_raw_info(info_view);
+        
+        // Parse FORMAT and samples if present
+        if (fields.has_more()) {
+            std::string_view format_view = fields.next();
+            rec.set_format(format_view);
+            
+            std::vector<std::vector<std::string_view>> samples;
+            while (fields.has_more()) {
+                std::string_view sample_view = fields.next();
+                std::vector<std::string_view> sample_values;
+                sample_values.reserve(8);
+                
+                detail::split_view(sample_view, ':', [&](std::string_view value) {
+                    sample_values.push_back(value);
+                });
+                
+                samples.push_back(std::move(sample_values));
+            }
+            rec.set_samples(samples);
+        }
+        
+        // Share arena buffer
+        rec.set_line_buffer(std::make_shared<std::string>(arena_line.data(), arena_line.size()));
+        
+        return true;
+    }
+
+    std::string filename_;
+    std::size_t num_threads_;
+    std::size_t chunk_size_;
+    bool header_read_;
+    std::size_t data_start_pos_;
+    std::vector<std::string> header_lines_;
 };
 
 } // namespace vcf

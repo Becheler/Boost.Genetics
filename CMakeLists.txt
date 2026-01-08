@@ -81,6 +81,12 @@ if(BUILD_BENCHMARKS)
         target_include_directories(benchmark_vcf_parsing PRIVATE ${PROFILER_INCLUDE})
         target_link_libraries(benchmark_vcf_parsing PRIVATE ${PROFILER_LIB})
     endif()
+    
+    # Parallel VCF parsing benchmark
+    add_executable(benchmark_vcf_parallel benchmarks/benchmark_vcf_parallel.cpp)
+    target_link_libraries(benchmark_vcf_parallel PRIVATE boost_genetics)
+    find_package(Threads REQUIRED)
+    target_link_libraries(benchmark_vcf_parallel PRIVATE Threads::Threads)
 endif()
 
 # Installation
