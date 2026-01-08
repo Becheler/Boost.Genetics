@@ -13,8 +13,16 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install CMake
-      run: sudo apt-get update && sudo apt-get install -y cmake
+    - name: Install dependencies
+      run: sudo apt-get update && sudo apt-get install -y cmake wget
+    
+    - name: Download test data
+      run: |
+        mkdir -p tests/data/reference
+        cd tests/data/reference
+        wget -q http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000_genomes_project/release/20181203_biallelic_SNV/ALL.chr22.shapeit2_integrated_v1a.GRCh38.20181129.phased.vcf.gz
+        gunzip -c ALL.chr22.shapeit2_integrated_v1a.GRCh38.20181129.phased.vcf.gz | head -n 10000 > chr22_subset.vcf
+        rm ALL.chr22.shapeit2_integrated_v1a.GRCh38.20181129.phased.vcf.gz
 
     - name: Configure CMake
       run: cmake -B build -DBUILD_TESTS=ON -DBUILD_EXAMPLES=ON -DBUILD_BENCHMARKS=OFF
