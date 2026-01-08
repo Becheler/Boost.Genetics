@@ -289,45 +289,35 @@ public:
     }
     
     /// @brief Add a sample with genotype data (backwards compatibility with map)
-    /// Note: Creates temporary strings, not zero-copy
+    /// Note: Creates actual string copies for safety (not zero-copy)
     void add_sample(const std::map<std::string, std::string>& sample_data) {
-        // For backward compatibility, we need to store these somewhere
-        // This won't be zero-copy but maintains API compatibility
-        if (!line_buffer_) {
-            line_buffer_ = std::make_shared<std::string>();
-        }
-        
         const std::vector<std::string>& format_fields = get_format_fields();
         
-        // Build all values in a temporary vector first
-        std::vector<std::string> temp_values;
-        temp_values.reserve(format_fields.size());
-        std::size_t total_size = 0;
+        // For the map-based API, we need to store actual strings to avoid
+        // dangling string_views when the buffer reallocates
+        std::vector<std::string> string_values;
+        string_values.reserve(format_fields.size());
         
         for (const std::string& field : format_fields) {
             auto it = sample_data.find(field);
             if (it != sample_data.end()) {
-                temp_values.push_back(it->second);
-                total_size += it->second.size() + 1;  // +1 for null terminator
+                string_values.push_back(it->second);
             } else {
-                temp_values.push_back(".");
-                total_size += 2;  // "." + null terminator
+                string_values.push_back(".");
             }
         }
         
-        // Reserve space in line_buffer to prevent reallocation
-        std::size_t start_pos = line_buffer_->size();
-        line_buffer_->reserve(start_pos + total_size);
+        // Store in a dedicated storage for map-based samples
+        if (!sample_storage_) {
+            sample_storage_ = std::make_shared<std::vector<std::vector<std::string>>>();
+        }
+        sample_storage_->push_back(std::move(string_values));
         
-        // Now append all values to line_buffer and create string_views
+        // Create string_views pointing to the stored strings
         std::vector<std::string_view> values;
-        values.reserve(temp_values.size());
-        
-        for (const std::string& val : temp_values) {
-            std::size_t pos = line_buffer_->size();
-            *line_buffer_ += val;
-            *line_buffer_ += '\0';
-            values.emplace_back(line_buffer_->data() + pos, val.size());
+        values.reserve(sample_storage_->back().size());
+        for (const std::string& val : sample_storage_->back()) {
+            values.emplace_back(val);
         }
         
         samples_.push_back(std::move(values));
@@ -645,6 +635,7 @@ private:
     mutable bool info_parsed_ = false;  // Track if INFO has been parsed
     std::string_view format_;  // Zero-copy from arena
     std::shared_ptr<std::string> line_buffer_;  // Keep data alive for constructed records
+    std::shared_ptr<std::vector<std::vector<std::string>>> sample_storage_;  // Storage for map-based samples
     std::vector<std::vector<std::string_view>> samples_;  // Zero-copy indexed storage
     mutable std::vector<std::string> format_fields_; // Cached parsed format
 

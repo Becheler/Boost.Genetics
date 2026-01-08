@@ -268,8 +268,12 @@ TEST_CASE("VCF sample data operations", "[vcf]") {
         rec.add_sample(sample2);
         
         REQUIRE(rec.samples().size() == 2);
-        REQUIRE(std::string(rec.get_sample_value(0, "GT")) == "0/1");
-        REQUIRE(std::string(rec.get_sample_value(1, "GT")) == "1/1");
+        std::string gt0 = rec.get_sample_value(0, "GT");
+        std::string gt1 = rec.get_sample_value(1, "GT");
+        INFO("Sample 0 GT value: '" << gt0 << "' (length=" << gt0.length() << ")");
+        INFO("Sample 1 GT value: '" << gt1 << "' (length=" << gt1.length() << ")");
+        REQUIRE(gt0 == "0/1");
+        REQUIRE(gt1 == "1/1");
     }
 }
 
