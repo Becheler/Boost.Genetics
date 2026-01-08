@@ -115,22 +115,23 @@ inline double parse_double_fast(std::string_view str) noexcept {
 }
 
 /// @brief Split string_view by delimiter, calling callback for each field
+/// Optimized: manual loop instead of find() for better performance
 template<typename Func>
 inline void split_view(std::string_view str, char delim, Func callback) {
-    std::size_t start = 0;
-    std::size_t pos = str.find(delim);
+    const char* data = str.data();
+    const char* end = data + str.size();
+    const char* start = data;
     
-    while (pos != std::string_view::npos) {
-        callback(str.substr(start, pos - start));
-        start = pos + 1;
-        pos = str.find(delim, start);
+    for (const char* p = data; p < end; ++p) {
+        if (*p == delim) {
+            callback(std::string_view(start, p - start));
+            start = p + 1;
+        }
     }
     
-    // Last field
-    if (start < str.size()) {
-        callback(str.substr(start));
-    } else if (start == str.size()) {
-        callback(std::string_view());
+    // Last field (always present, even if empty)
+    if (start <= end) {
+        callback(std::string_view(start, end - start));
     }
 }
 
