@@ -43,8 +43,8 @@ jobs:
     - name: Run benchmarks and generate report
       id: bench
       run: |
-        ./scripts/generate_benchmark_report.sh benchmark_results/report.md
         mkdir -p benchmark_results
+        ./scripts/generate_benchmark_report.sh benchmark_results/report.md
         
         # Extract metrics for outputs
         SEQ_RATE=$(grep "Sequential" benchmark_results/report.md | awk '{print $4}')
