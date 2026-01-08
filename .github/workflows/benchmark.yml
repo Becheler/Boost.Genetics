@@ -32,79 +32,30 @@ jobs:
         cmake -B build -DBUILD_BENCHMARKS=ON -DCMAKE_BUILD_TYPE=Release
         cmake --build build --target benchmark_vcf_parallel benchmark_vcf_parsing -j$(nproc)
     
-    - name: Run sequential benchmark
-      id: seq_bench
+    - name: Run benchmarks and generate report
+      id: bench
       run: |
-        cd build
-        OUTPUT=$(./benchmark_vcf_parsing ../tests/data/reference/chr22_subset.vcf 2>&1)
-        echo "$OUTPUT"
-        RATE=$(echo "$OUTPUT" | grep "records/sec" | awk '{print $1}')
-        echo "rate=$RATE" >> $GITHUB_OUTPUT
-    
-    - name: Run parallel benchmark (4 threads)
-      id: par_bench
-      run: |
-        cd build
-        OUTPUT=$(./benchmark_vcf_parallel ../tests/data/reference/chr22_subset.vcf 4 2>&1)
-        echo "$OUTPUT"
-        RATE=$(echo "$OUTPUT" | grep "Parallel.*rec/s" | awk '{print $4}')
-        echo "rate=$RATE" >> $GITHUB_OUTPUT
-    
-    - name: Run bcftools baseline
-      id: bcftools_bench
-      run: |
-        START=$(date +%s.%N)
-        bcftools view -H tests/data/reference/chr22_subset.vcf > /dev/null
-        END=$(date +%s.%N)
-        DURATION=$(echo "$END - $START" | bc)
-        RECORDS=$(bcftools view -H tests/data/reference/chr22_subset.vcf | wc -l)
-        RATE=$(echo "scale=0; $RECORDS / $DURATION" | bc)
-        echo "bcftools: $RATE rec/s"
-        echo "rate=$RATE" >> $GITHUB_OUTPUT
-    
-    - name: Generate benchmark results
-      run: |
+        ./scripts/generate_benchmark_report.sh benchmark_results/report.md
         mkdir -p benchmark_results
+        
+        # Extract metrics for outputs
+        SEQ_RATE=$(grep "Sequential" benchmark_results/report.md | awk '{print $4}')
+        PAR_RATE=$(grep "Parallel" benchmark_results/report.md | awk '{print $5}')
+        BCF_RATE=$(grep "bcftools" benchmark_results/report.md | awk '{print $3}')
+        
+        echo "seq_rate=$SEQ_RATE" >> $GITHUB_OUTPUT
+        echo "par_rate=$PAR_RATE" >> $GITHUB_OUTPUT
+        echo "bcf_rate=$BCF_RATE" >> $GITHUB_OUTPUT
+        
+        # Generate badge JSON
         cat > benchmark_results/results.json << EOF
         {
           "schemaVersion": 1,
           "label": "VCF Parsing",
-          "message": "${{ steps.par_bench.outputs.rate }} rec/s",
+          "message": "$PAR_RATE rec/s",
           "color": "brightgreen"
         }
         EOF
-        
-        cat > benchmark_results/report.md << EOF
-        # Benchmark Results
-        
-        **Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")  
-        **Commit:** ${{ github.sha }}  
-        **Runner:** ubuntu-latest ($(nproc) cores)
-        
-        ## Performance Metrics
-        
-        | Implementation | Records/sec | Speedup vs bcftools |
-        |----------------|-------------|---------------------|
-        | **Boost.Genetics Parallel (4 threads)** | **${{ steps.par_bench.outputs.rate }}** | **$(echo "scale=2; ${{ steps.par_bench.outputs.rate }} / ${{ steps.bcftools_bench.outputs.rate }}" | bc)x** |
-        | Boost.Genetics Sequential | ${{ steps.seq_bench.outputs.rate }} | $(echo "scale=2; ${{ steps.seq_bench.outputs.rate }} / ${{ steps.bcftools_bench.outputs.rate }}" | bc)x |
-        | bcftools (baseline) | ${{ steps.bcftools_bench.outputs.rate }} | 1.00x |
-        
-        ## Optimizations Implemented
-        
-        - ✅ Zero-copy string_view parsing
-        - ✅ Arena memory allocator (bump-pointer)
-        - ✅ Lazy INFO field parsing
-        - ✅ Parallel chunk-based parsing
-        - ✅ Cache-friendly data structures
-        
-        ## Dataset
-        
-        - **Source:** 1000 Genomes Project chr22
-        - **Records:** ~6,272 variants
-        - **Size:** ~10,000 lines
-        EOF
-        
-        cat benchmark_results/report.md
     
     - name: Upload benchmark results
       uses: actions/upload-artifact@v4
