@@ -67,14 +67,27 @@ Makefile
 # Test and benchmark executables
 test_sequence
 test_variant
+test_vcf
+test_validation
 benchmark_sequence
 benchmark_variant
+benchmark_vcf_parsing
+benchmark_vcf_parallel
 sequence_example
 variant_example
+vcf_example
+
+# Profiling output files
+*.prof
+*.log
+callgrind.out.*
+perf.data*
 
 # CTest
 Testing/
 CTestTestfile.cmake
 
+# Test data (downloaded by benchmark script)
 tests/data/reference/*.vcf.gz*
 tests/data/reference/*.vcf
+tests/data/reference/*.bcf

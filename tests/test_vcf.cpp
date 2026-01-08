@@ -4,8 +4,8 @@
 
 #define CATCH_CONFIG_MAIN
 #include "catch2/catch.hpp"
-#include <genetics/vcf.hpp>
-#include <genetics/bcf.hpp>
+#include <boost/genetics/vcf.hpp>
+#include <boost/genetics/bcf.hpp>
 #include <sstream>
 #include <fstream>
 #include <algorithm>

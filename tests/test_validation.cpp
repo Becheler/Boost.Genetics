@@ -1,6 +1,6 @@
 #define CATCH_CONFIG_MAIN
 #include "catch2/catch.hpp"
-#include "../include/genetics/vcf.hpp"
+#include <boost/genetics/vcf.hpp>
 #include <fstream>
 #include <sstream>
 #include <cstdlib>
@@ -165,7 +165,7 @@ TEST_CASE("Validation: Compare with bcftools on chr22 subset", "[validation][bcf
             REQUIRE(line_num < bcftools_lines.size());
             
             std::string expected_filter = bcftools_lines[line_num];
-            std::string actual_filter = rec.filter();
+            std::string actual_filter(rec.filter());  // Convert string_view to string
             
             // Normalize: empty string == "."
             if (actual_filter.empty()) actual_filter = ".";

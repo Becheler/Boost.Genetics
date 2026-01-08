@@ -19,10 +19,10 @@
 #include <thread>
 #include <future>
 #include <mutex>
-#include <genetics/vcf_gvcf.hpp>
-#include <genetics/vcf_metadata.hpp>
-#include <genetics/vcf_structural_variants.hpp>
-#include <genetics/vcf_validation.hpp>
+#include <boost/genetics/vcf/vcf_gvcf.hpp>
+#include <boost/genetics/vcf/vcf_metadata.hpp>
+#include <boost/genetics/vcf/vcf_structural_variants.hpp>
+#include <boost/genetics/vcf/vcf_validation.hpp>
 
 namespace boost {
 namespace genetics {

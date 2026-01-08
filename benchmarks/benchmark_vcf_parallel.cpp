@@ -1,4 +1,4 @@
-#include <genetics/vcf.hpp>
+#include <boost/genetics/vcf.hpp>
 #include <iostream>
 #include <chrono>
 #include <iomanip>
