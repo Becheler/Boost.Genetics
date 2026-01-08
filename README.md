@@ -1,14 +1,32 @@
 # Boost.Genetics
 
-A lightweight, header-only C++ library for working with VCF (Variant Call Format) files, designed as a prototype candidate for the Boost C++ Libraries.
+[![CI](https://github.com/arnaudbecheler/Boost.Genetics/actions/workflows/ci.yml/badge.svg)](https://github.com/arnaudbecheler/Boost.Genetics/actions/workflows/ci.yml)
+[![Benchmark](https://github.com/arnaudbecheler/Boost.Genetics/actions/workflows/benchmark.yml/badge.svg)](https://github.com/arnaudbecheler/Boost.Genetics/actions/workflows/benchmark.yml)
+[![Documentation](https://github.com/arnaudbecheler/Boost.Genetics/actions/workflows/pages.yml/badge.svg)](https://arnaudbecheler.github.io/Boost.Genetics/)
+
+A high-performance, header-only C++17 library for genomic data processing, designed as a prototype candidate for the Boost C++ Libraries.
+
+## Performance
+
+**60% faster than bcftools** with parallel parsing:
+
+| Implementation | Records/sec | Speedup |
+|----------------|-------------|---------|
+| **Boost.Genetics Parallel (8 threads)** | **~19,300** | **~4.5x sequential** |
+| Boost.Genetics Sequential | ~4,300 | 1.0x |
+| bcftools | ~12,000 | baseline |
+
+*Benchmarks on 1000 Genomes chr22 dataset. See [benchmarking guide](docs/BENCHMARKING.md) for details.*
 
 ## Features
 
-- **Header-only**: No compilation required, just include and use
-- **VCFv4.3 compliant**: Full support for the VCF specification
-- **Modern C++**: C++11 standard
-- **Well-tested**: Comprehensive test suite using Catch2
-- **Error context**: Detailed error messages with line numbers
+- ⚡ **Ultra-fast VCF parsing**: 60% faster than bcftools with parallel processing
+- 🔄 **Parallel processing**: Near-linear scaling up to 4 cores
+- 💾 **Zero-copy design**: Minimal memory allocations using `string_view`
+- 🎯 **Modern C++17**: Clean, type-safe API
+- 📦 **Header-only**: No compilation required, just include and use
+- ✅ **VCFv4.3 compliant**: Full support for the VCF specification
+- 🧪 **Well-tested**: Comprehensive test suite (381 assertions)
 
 ## VCF Support
 
@@ -64,30 +82,51 @@ Complete implementation of the Variant Call Format specification (VCFv4.3):
 
 ## Quick Start
 
-### Using the Library
-
-Since this is a header-only library, simply include the headers you need:
+### Sequential Parsing
 
 ```cpp
-#include <genetics/vcf.hpp>
+#include <boost/genetics/vcf.hpp>
 #include <iostream>
 
 int main() {
     using namespace boost::genetics;
     
     // Read VCF file
-    try {
-        vcf::reader reader("variants.vcf");
-        std::cout << "VCF version: " << reader.version() << std::endl;
-        
-        vcf::record rec;
-        while (reader.read_record(rec)) {
-            std::cout << rec.chrom() << ":" << rec.pos() 
-                      << " " << rec.ref() << ">" << rec.alt()[0] << std::endl;
-        }
-    } catch (const vcf::vcf_parse_error& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-        std::cerr << "Line: " << e.line() << std::endl;
+    vcf::reader reader("variants.vcf");
+    std::cout << "VCF version: " << reader.version() << std::endl;
+    
+    vcf::record rec;
+    while (reader.read_record(rec)) {
+        std::cout << rec.chrom() << ":" << rec.pos() 
+                  << " " << rec.ref() << ">" << rec.alt()[0] << std::endl;
+    }
+    
+    return 0;
+}
+```
+
+### Parallel Parsing (4.5x faster)
+
+```cpp
+#include <boost/genetics/vcf.hpp>
+#include <iostream>
+
+int main() {
+    using namespace boost::genetics;
+    
+    // Parallel parsing with 8 threads
+    vcf::parallel_reader reader("variants.vcf", 8);
+    
+    // Read header
+    auto header = reader.read_header();
+    std::cout << "VCF version: " << header.version() << std::endl;
+    
+    // Parse all records in parallel (unordered for max performance)
+    auto records = reader.read_all_unordered();
+    
+    std::cout << "Parsed " << records.size() << " records" << std::endl;
+    for (const auto& rec : records) {
+        std::cout << rec.chrom() << ":" << rec.pos() << std::endl;
     }
     
     return 0;
@@ -97,7 +136,7 @@ int main() {
 ### Writing VCF Files
 
 ```cpp
-#include <genetics/vcf.hpp>
+#include <boost/genetics/vcf.hpp>
 
 int main() {
     using namespace boost::genetics;
@@ -133,32 +172,46 @@ int main() {
 }
 ```
 
+## Installation
+
+### Header-Only (Recommended)
+
+```bash
+# Clone the repository
+git clone https://github.com/arnaudbecheler/Boost.Genetics.git
+cd Boost.Genetics
+
+# Add include directory to your project
+# In your CMakeLists.txt:
+target_include_directories(your_target PRIVATE ${CMAKE_SOURCE_DIR}/Boost.Genetics/include)
+```
+
 ### Building with CMake
 
 ```bash
 mkdir build
 cd build
-cmake ..
-make
+cmake .. -DBUILD_EXAMPLES=ON -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=ON
+make -j$(nproc)
 ```
 
 ### Running Examples
 
 ```bash
-# Build examples
-cmake -DBUILD_EXAMPLES=ON ..
-make
+# Sequential parsing
+./build/vcf_example
 
-# Run VCF example
-./vcf_example
+# Parallel parsing benchmark
+./build/benchmark_vcf_parallel tests/data/reference/chr22_subset.vcf 8
 ```
 
 ### Running Tests
 
 ```bash
-# Build tests
+# Build and run tests
 cmake -DBUILD_TESTS=ON ..
-make
+make -j$(nproc)
+./build/test_vcf
 
 # Run tests
 ctest --output-on-failure
