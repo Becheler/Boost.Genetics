@@ -32,6 +32,14 @@ jobs:
         cmake -B build -DBUILD_BENCHMARKS=ON -DCMAKE_BUILD_TYPE=Release
         cmake --build build --target benchmark_vcf_parallel benchmark_vcf_parsing -j$(nproc)
     
+    - name: Test benchmarks (debug)
+      run: |
+        ls -lh tests/data/reference/chr22_subset.vcf
+        echo "Testing sequential benchmark..."
+        ./build/benchmark_vcf_parsing tests/data/reference/chr22_subset.vcf || echo "Sequential failed"
+        echo "Testing parallel benchmark with 1 thread..."
+        ./build/benchmark_vcf_parallel tests/data/reference/chr22_subset.vcf 1 || echo "Parallel (1 thread) failed"
+    
     - name: Run benchmarks and generate report
       id: bench
       run: |
