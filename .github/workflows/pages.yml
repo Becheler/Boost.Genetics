@@ -1,0 +1,69 @@
+name: Deploy Documentation
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Pages
+      uses: actions/configure-pages@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential bcftools wget pandoc
+    
+    - name: Download test dataset for benchmarks
+      run: |
+        mkdir -p tests/data/reference
+        cd tests/data/reference
+        wget -q http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000_genomes_project/release/20181203_biallelic_SNV/ALL.chr22.shapeit2_integrated_v1a.GRCh38.20181129.phased.vcf.gz
+        gunzip -c ALL.chr22.shapeit2_integrated_v1a.GRCh38.20181129.phased.vcf.gz | head -n 10000 > chr22_subset.vcf
+        rm ALL.chr22.shapeit2_integrated_v1a.GRCh38.20181129.phased.vcf.gz
+    
+    - name: Run benchmarks
+      run: |
+        cmake -B build -DBUILD_BENCHMARKS=ON -DCMAKE_BUILD_TYPE=Release
+        cmake --build build --target benchmark_vcf_parallel benchmark_vcf_parsing -j$(nproc)
+        ./scripts/generate_benchmark_report.sh
+    
+    - name: Build documentation site
+      run: |
+        mkdir -p _site
+        cp scripts/index.html _site/
+        
+        # Convert markdown docs to HTML
+        pandoc README.md -o _site/README.html --standalone --metadata title="Boost.Genetics README" || cp README.md _site/
+        pandoc docs/BENCHMARKING.md -o _site/BENCHMARKING.html --standalone --metadata title="Benchmarking Guide" || cp docs/BENCHMARKING.md _site/
+        pandoc docs/benchmark_results.md -o _site/benchmark_results.html --standalone --metadata title="Latest Results" || cp docs/benchmark_results.md _site/
+        cp -r docs _site/ || true
+    
+    - name: Upload artifact
+      uses: actions/upload-pages-artifact@v3
+  
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

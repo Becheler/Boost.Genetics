@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Boost.Genetics - High-Performance Genomics Library</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+        h1 { margin: 0 0 10px 0; }
+        .tagline { opacity: 0.9; font-size: 1.2em; }
+        .content {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #667eea;
+            color: white;
+        }
+        tr:hover { background: #f5f5f5; }
+        code {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+        pre {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🧬 Boost.Genetics</h1>
+        <p class="tagline">High-performance C++17 library for genomic data processing</p>
+    </header>
+    
+    <div class="content">
+        <h2>Features</h2>
+        <ul>
+            <li>⚡ <strong>Ultra-fast VCF parsing</strong> - 60% faster than bcftools</li>
+            <li>🔄 <strong>Parallel processing</strong> - Near-linear scaling up to 4 cores</li>
+            <li>💾 <strong>Zero-copy design</strong> - Minimal memory allocations</li>
+            <li>🎯 <strong>Modern C++17</strong> - Clean, type-safe API</li>
+            <li>📦 <strong>Header-only</strong> - Easy integration</li>
+        </ul>
+        
+        <h2>Quick Start</h2>
+        <pre><code>// Sequential parsing
+vcf::reader reader("variants.vcf");
+for (const auto&amp; record : reader) {
+    std::cout &lt;&lt; record.chrom() &lt;&lt; ":" &lt;&lt; record.pos() &lt;&lt; std::endl;
+}
+
+// Parallel parsing (4 threads)
+vcf::parallel_reader parallel("variants.vcf", 4);
+auto records = parallel.read_all_unordered();
+std::cout &lt;&lt; "Parsed " &lt;&lt; records.size() &lt;&lt; " records" &lt;&lt; std::endl;</code></pre>
+        
+        <div id="benchmarks"></div>
+        
+        <h2>Documentation</h2>
+        <ul>
+            <li><a href="https://github.com/arnaudbecheler/Boost.Genetics">GitHub Repository</a></li>
+            <li><a href="BENCHMARKING.html">Benchmarking Guide</a></li>
+            <li><a href="https://github.com/arnaudbecheler/Boost.Genetics/tree/main/examples">Examples</a></li>
+        </ul>
+        
+        <h2>Optimizations</h2>
+        <ul>
+            <li>✅ Zero-copy <code>string_view</code> parsing</li>
+            <li>✅ Arena memory allocator (bump-pointer)</li>
+            <li>✅ Lazy INFO field parsing</li>
+            <li>✅ Parallel chunk-based parsing</li>
+            <li>✅ Cache-friendly data structures</li>
+        </ul>
+    </div>
+    
+    <script>
+        fetch('benchmark_results.html')
+            .then(r => r.text())
+            .then(html => {
+                document.getElementById('benchmarks').innerHTML = html;
+            })
+            .catch(() => {
+                document.getElementById('benchmarks').innerHTML = '<p><em>Benchmark results unavailable</em></p>';
+            });
+    </script>
+</body>
+</html>

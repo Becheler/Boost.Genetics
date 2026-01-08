@@ -1,0 +1,72 @@
+name: Benchmark
+
+on:
+  push:
+    branches: [ main, feature/vcf-format-support ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential bcftools wget
+    
+    - name: Download test dataset
+      run: |
+        mkdir -p tests/data/reference
+        cd tests/data/reference
+        wget -q http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000_genomes_project/release/20181203_biallelic_SNV/ALL.chr22.shapeit2_integrated_v1a.GRCh38.20181129.phased.vcf.gz
+        gunzip -c ALL.chr22.shapeit2_integrated_v1a.GRCh38.20181129.phased.vcf.gz | head -n 10000 > chr22_subset.vcf
+        rm ALL.chr22.shapeit2_integrated_v1a.GRCh38.20181129.phased.vcf.gz
+    
+    - name: Build benchmarks
+      run: |
+        cmake -B build -DBUILD_BENCHMARKS=ON -DCMAKE_BUILD_TYPE=Release
+        cmake --build build --target benchmark_vcf_parallel benchmark_vcf_parsing -j$(nproc)
+    
+    - name: Test benchmarks (debug)
+      run: |
+        ls -lh tests/data/reference/chr22_subset.vcf
+        echo "Testing sequential benchmark..."
+        ./build/benchmark_vcf_parsing tests/data/reference/chr22_subset.vcf || echo "Sequential failed"
+        echo "Testing parallel benchmark with 1 thread..."
+        ./build/benchmark_vcf_parallel tests/data/reference/chr22_subset.vcf 1 || echo "Parallel (1 thread) failed"
+    
+    - name: Run benchmarks and generate report
+      id: bench
+      run: |
+        mkdir -p benchmark_results
+        ./scripts/generate_benchmark_report.sh benchmark_results/report.md
+        
+        # Extract metrics for outputs
+        SEQ_RATE=$(grep "Sequential" benchmark_results/report.md | awk '{print $4}')
+        PAR_RATE=$(grep "Parallel" benchmark_results/report.md | awk '{print $5}')
+        BCF_RATE=$(grep "bcftools" benchmark_results/report.md | awk '{print $3}')
+        
+        echo "seq_rate=$SEQ_RATE" >> $GITHUB_OUTPUT
+        echo "par_rate=$PAR_RATE" >> $GITHUB_OUTPUT
+        echo "bcf_rate=$BCF_RATE" >> $GITHUB_OUTPUT
+        
+        # Generate badge JSON
+        cat > benchmark_results/results.json << EOF
+        {
+          "schemaVersion": 1,
+          "label": "VCF Parsing",
+          "message": "$PAR_RATE rec/s",
+          "color": "brightgreen"
+        }
+        EOF
+    
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results
+        path: benchmark_results/
