@@ -6,6 +6,10 @@
 #include <vector>
 #include <cstdlib>
 
+#ifdef USE_GPERFTOOLS
+#include <gperftools/profiler.h>
+#endif
+
 using namespace boost::genetics;
 
 struct benchmark_result {
@@ -30,7 +34,14 @@ void print_result(const benchmark_result& result) {
               << std::fixed << std::setprecision(2) << result.mb_per_second() << " MB/s\n";
 }
 
-benchmark_result benchmark_parsing(const std::string& vcf_file) {
+benchmark_result benchmark_parsing(const std::string& vcf_file, bool enable_profiling = false) {
+#ifdef USE_GPERFTOOLS
+    if (enable_profiling) {
+        std::cout << "Starting CPU profiler (output: vcf_profile.prof)...\n";
+        ProfilerStart("vcf_profile.prof");
+    }
+#endif
+
     auto start = std::chrono::high_resolution_clock::now();
     
     vcf::reader reader(vcf_file);
@@ -59,6 +70,16 @@ benchmark_result benchmark_parsing(const std::string& vcf_file) {
         (void)rec.alt().size();
         (void)rec.info();
         (void)rec.samples();
+
+#ifdef USE_GPERFTOOLS
+    if (enable_profiling) {
+        ProfilerStop();
+        std::cout << "\nProfiler stopped. Analyze with:\n";
+        std::cout << "  pprof --text ./benchmark_vcf_parsing vcf_profile.prof\n";
+        std::cout << "  pprof --pdf ./benchmark_vcf_parsing vcf_profile.prof > profile.pdf\n";
+        std::cout << "  pprof --web ./benchmark_vcf_parsing vcf_profile.prof\n\n";
+    }
+#endif
         
         parse_start = std::chrono::high_resolution_clock::now();
         io_time += std::chrono::duration<double>(parse_start - parse_end).count();
@@ -169,11 +190,12 @@ benchmark_result benchmark_bcftools(const std::string& vcf_file) {
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <vcf_file>\n";
+        std::cerr << "Usage: " << argv[0] << " <vcf_file> [--profile]\n";
         return 1;
     }
     
     std::string vcf_file = argv[1];
+    bool enable_profiling = (argc > 2 && std::string(argv[2]) == "--profile");
     
     std::cout << "=== VCF Parsing Benchmarks ===\n\n";
     std::cout << "Input file: " << vcf_file << "\n\n";
@@ -193,8 +215,8 @@ int main(int argc, char* argv[]) {
         }
         
         // Our parser without validation
-        std::cout << "Running our parser...\n";
-        auto parse_result = benchmark_parsing(vcf_file);
+        std::cout << "Running our parser" << (enable_profiling ? " with profiling" : "") << "...\n";
+        auto parse_result = benchmark_parsing(vcf_file, enable_profiling);
         print_result(parse_result);
         
         if (has_bcftools) {

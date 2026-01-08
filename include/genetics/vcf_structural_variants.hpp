@@ -83,39 +83,40 @@ struct breakend {
 /// Parse breakend notation from ALT field
 /// Formats: t[p[, t]p], ]p]t, [p[t
 /// Returns true if successfully parsed as a breakend
-inline bool parse_breakend(const std::string& alt, breakend& result) {
+inline bool parse_breakend(std::string_view alt, breakend& result) {
     // Try to find bracket patterns
     std::size_t open_bracket = alt.find('[');
     std::size_t close_bracket = alt.find(']');
     
-    if (open_bracket == std::string::npos && close_bracket == std::string::npos) {
+    if (open_bracket == std::string_view::npos && close_bracket == std::string_view::npos) {
         return false;  // Not a breakend
     }
     
     // Pattern: t[p[ or [p[t
-    if (open_bracket != std::string::npos) {
+    if (open_bracket != std::string_view::npos) {
         std::size_t second_bracket = alt.find('[', open_bracket + 1);
-        if (second_bracket == std::string::npos) return false;
+        if (second_bracket == std::string_view::npos) return false;
         
         // Extract position between brackets
-        std::string pos_str = alt.substr(open_bracket + 1, second_bracket - open_bracket - 1);
+        std::string_view pos_str = alt.substr(open_bracket + 1, second_bracket - open_bracket - 1);
         
         // Split chr:pos
         std::size_t colon = pos_str.find(':');
-        if (colon == std::string::npos) return false;
+        if (colon == std::string_view::npos) return false;
         
-        result.mate_chr = pos_str.substr(0, colon);
-        result.mate_pos = std::atoi(pos_str.substr(colon + 1).c_str());
+        result.mate_chr = std::string(pos_str.substr(0, colon));
+        std::string pos_part(pos_str.substr(colon + 1));
+        result.mate_pos = std::atoi(pos_part.c_str());
         
         // Determine orientation and position
         if (open_bracket == 0) {
             // [p[t - reverse complement extending right, joined before t
-            result.novel_sequence = alt.substr(second_bracket + 1);
+            result.novel_sequence = std::string(alt.substr(second_bracket + 1));
             result.orientation = breakend_orientation::REVERSE;
             result.position = breakend_position::BEFORE;
         } else {
             // t[p[ - piece extending right of p joined after t
-            result.novel_sequence = alt.substr(0, open_bracket);
+            result.novel_sequence = std::string(alt.substr(0, open_bracket));
             result.orientation = breakend_orientation::FORWARD;
             result.position = breakend_position::AFTER;
         }
@@ -124,29 +125,30 @@ inline bool parse_breakend(const std::string& alt, breakend& result) {
     }
     
     // Pattern: t]p] or ]p]t
-    if (close_bracket != std::string::npos) {
+    if (close_bracket != std::string_view::npos) {
         std::size_t second_bracket = alt.find(']', close_bracket + 1);
-        if (second_bracket == std::string::npos) return false;
+        if (second_bracket == std::string_view::npos) return false;
         
         // Extract position between brackets
-        std::string pos_str = alt.substr(close_bracket + 1, second_bracket - close_bracket - 1);
+        std::string_view pos_str = alt.substr(close_bracket + 1, second_bracket - close_bracket - 1);
         
         // Split chr:pos
         std::size_t colon = pos_str.find(':');
-        if (colon == std::string::npos) return false;
+        if (colon == std::string_view::npos) return false;
         
-        result.mate_chr = pos_str.substr(0, colon);
-        result.mate_pos = std::atoi(pos_str.substr(colon + 1).c_str());
+        result.mate_chr = std::string(pos_str.substr(0, colon));
+        std::string pos_part(pos_str.substr(colon + 1));
+        result.mate_pos = std::atoi(pos_part.c_str());
         
         // Determine orientation and position
         if (close_bracket == 0) {
             // ]p]t - piece extending left of p joined before t
-            result.novel_sequence = alt.substr(second_bracket + 1);
+            result.novel_sequence = std::string(alt.substr(second_bracket + 1));
             result.orientation = breakend_orientation::FORWARD;
             result.position = breakend_position::BEFORE;
         } else {
             // t]p] - reverse complement extending left of p joined after t
-            result.novel_sequence = alt.substr(0, close_bracket);
+            result.novel_sequence = std::string(alt.substr(0, close_bracket));
             result.orientation = breakend_orientation::REVERSE;
             result.position = breakend_position::AFTER;
         }
@@ -178,15 +180,16 @@ struct sv_info {
 };
 
 /// Parse INFO field to extract SV-specific information
-inline sv_info parse_sv_info(const std::string& info_str) {
+inline sv_info parse_sv_info(std::string_view info_str) {
     sv_info result;
     
     if (info_str.empty() || info_str == ".") {
         return result;
     }
     
-    // Split by semicolon
-    std::istringstream iss(info_str);
+    // Split by semicolon (convert to string for istringstream)
+    std::string info_s(info_str);
+    std::istringstream iss(info_s);
     std::string token;
     
     while (std::getline(iss, token, ';')) {
@@ -244,19 +247,19 @@ inline sv_info parse_sv_info(const std::string& info_str) {
 // ============================================================================
 
 /// Check if ALT field is a symbolic allele
-inline bool is_symbolic_allele(const std::string& alt) {
+inline bool is_symbolic_allele(std::string_view alt) {
     return !alt.empty() && alt[0] == '<' && alt[alt.size() - 1] == '>';
 }
 
 /// Extract symbolic allele ID (e.g., "<DEL>" -> "DEL")
-inline std::string get_symbolic_id(const std::string& alt) {
+inline std::string get_symbolic_id(std::string_view alt) {
     if (!is_symbolic_allele(alt)) return "";
-    return alt.substr(1, alt.size() - 2);
+    return std::string(alt.substr(1, alt.size() - 2));
 }
 
 /// Check if ALT field is a breakend notation
-inline bool is_breakend_notation(const std::string& alt) {
-    return alt.find('[') != std::string::npos || alt.find(']') != std::string::npos;
+inline bool is_breakend_notation(std::string_view alt) {
+    return alt.find('[') != std::string_view::npos || alt.find(']') != std::string_view::npos;
 }
 
 // ============================================================================
@@ -264,7 +267,7 @@ inline bool is_breakend_notation(const std::string& alt) {
 // ============================================================================
 
 /// Determine SV type from ALT field and INFO
-inline sv_type detect_sv_type(const std::string& alt, const std::string& info_str) {
+inline sv_type detect_sv_type(std::string_view alt, std::string_view info_str) {
     // Check symbolic alleles first
     if (is_symbolic_allele(alt)) {
         std::string id = get_symbolic_id(alt);

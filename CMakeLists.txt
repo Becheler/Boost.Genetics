@@ -9,6 +9,17 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Add profiling and optimization flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -g -fno-omit-frame-pointer")
 
+# Optional gperftools for profiling
+find_library(PROFILER_LIB profiler HINTS /opt/homebrew/opt/gperftools/lib)
+find_path(PROFILER_INCLUDE gperftools/profiler.h HINTS /opt/homebrew/opt/gperftools/include)
+if(PROFILER_LIB AND PROFILER_INCLUDE)
+    message(STATUS "gperftools found - profiling enabled")
+    set(PROFILER_AVAILABLE TRUE)
+else()
+    message(STATUS "gperftools not found - profiling disabled")
+    set(PROFILER_AVAILABLE FALSE)
+endif()
+
 # Find dependencies
 find_package(Boost COMPONENTS iostreams)
 find_package(ZLIB)
@@ -63,6 +74,13 @@ option(BUILD_BENCHMARKS "Build benchmarks" OFF)
 if(BUILD_BENCHMARKS)
     add_executable(benchmark_vcf_parsing benchmarks/benchmark_vcf_parsing.cpp)
     target_link_libraries(benchmark_vcf_parsing PRIVATE boost_genetics)
+    
+    # Add gperftools if available
+    if(PROFILER_AVAILABLE)
+        target_compile_definitions(benchmark_vcf_parsing PRIVATE USE_GPERFTOOLS)
+        target_include_directories(benchmark_vcf_parsing PRIVATE ${PROFILER_INCLUDE})
+        target_link_libraries(benchmark_vcf_parsing PRIVATE ${PROFILER_LIB})
+    endif()
 endif()
 
 # Installation

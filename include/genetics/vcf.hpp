@@ -216,36 +216,60 @@ public:
            const std::string& ref, const std::vector<std::string>& alt,
            double qual, const std::string& filter,
            const std::map<std::string, std::string>& info = std::map<std::string, std::string>())
-        : chrom_(chrom), pos_(pos), id_(id), ref_(ref), alt_(alt),
-          qual_(qual), filter_(filter), info_(info) {}
+        : pos_(pos), alt_(alt), qual_(qual), info_(info), info_parsed_(true) {
+        // Store strings in line_buffer to keep string_view members valid
+        line_buffer_ = std::make_shared<std::string>();
+        line_buffer_->reserve(chrom.size() + id.size() + ref.size() + filter.size() + 4);
+        
+        size_t offset = 0;
+        *line_buffer_ += chrom + '\0';
+        chrom_ = std::string_view(line_buffer_->data() + offset, chrom.size());
+        offset += chrom.size() + 1;
+        
+        *line_buffer_ += id + '\0';
+        id_ = std::string_view(line_buffer_->data() + offset, id.size());
+        offset += id.size() + 1;
+        
+        *line_buffer_ += ref + '\0';
+        ref_ = std::string_view(line_buffer_->data() + offset, ref.size());
+        offset += ref.size() + 1;
+        
+        *line_buffer_ += filter + '\0';
+        filter_ = std::string_view(line_buffer_->data() + offset, filter.size());
+    }
 
-    // Getters
-    const std::string& chrom() const { return chrom_; }
+    // Getters (zero-copy string_view for core fields)
+    std::string_view chrom() const { return chrom_; }
     std::size_t pos() const { return pos_; }
-    const std::string& id() const { return id_; }
-    const std::string& ref() const { return ref_; }
+    std::string_view id() const { return id_; }
+    std::string_view ref() const { return ref_; }
     const std::vector<std::string>& alt() const { return alt_; }
     double qual() const { return qual_; }
-    const std::string& filter() const { return filter_; }
-    const std::map<std::string, std::string>& info() const { return info_; }
-    const std::string& format() const { return format_; }
+    std::string_view filter() const { return filter_; }
+    const std::map<std::string, std::string>& info() const { 
+        if (!info_parsed_) parse_info_lazy();
+        return info_; 
+    }
+    std::string_view format() const { return format_; }
     const std::vector<std::vector<std::string_view>>& samples() const { return samples_; }
 
-    // Setters
-    void set_chrom(const std::string& chrom) { chrom_ = chrom; }
+    // Setters (zero-copy string_view)
+    void set_chrom(std::string_view chrom) { chrom_ = chrom; }
     void set_pos(std::size_t pos) { pos_ = pos; }
-    void set_id(const std::string& id) { id_ = id; }
-    void set_ref(const std::string& ref) { ref_ = ref; }
+    void set_id(std::string_view id) { id_ = id; }
+    void set_ref(std::string_view ref) { ref_ = ref; }
     void set_alt(const std::vector<std::string>& alt) { alt_ = alt; }
     void set_qual(double qual) { qual_ = qual; }
-    void set_filter(const std::string& filter) { filter_ = filter; }
-    void set_info(const std::map<std::string, std::string>& info) { info_ = info; }
-    void set_format(const std::string& format) { format_ = format; format_fields_.clear(); }
+    void set_filter(std::string_view filter) { filter_ = filter; }
+    void set_info(const std::map<std::string, std::string>& info) { info_ = info; info_parsed_ = true; }
+    void set_raw_info(std::string_view raw) { raw_info_view_ = raw; info_parsed_ = false; info_.clear(); }
+    void set_format(std::string_view format) { format_ = format; format_fields_.clear(); }
     void set_samples(const std::vector<std::vector<std::string_view>>& samples) { samples_ = samples; }
     void set_line_buffer(std::shared_ptr<std::string> buffer) { line_buffer_ = buffer; }
 
     /// @brief Add an INFO field entry
     void add_info(const std::string& key, const std::string& value) {
+        if (!info_parsed_) parse_info_lazy();
         info_[key] = value;
     }
 
@@ -264,22 +288,38 @@ public:
         }
         
         const std::vector<std::string>& format_fields = get_format_fields();
-        std::vector<std::string_view> values;
-        values.reserve(format_fields.size());
         
-        std::size_t start_pos = line_buffer_->size();
+        // Build all values in a temporary vector first
+        std::vector<std::string> temp_values;
+        temp_values.reserve(format_fields.size());
+        std::size_t total_size = 0;
+        
         for (const std::string& field : format_fields) {
             auto it = sample_data.find(field);
             if (it != sample_data.end()) {
-                std::size_t pos = line_buffer_->size();
-                *line_buffer_ += it->second + '\0';
-                values.emplace_back(line_buffer_->data() + pos, it->second.size());
+                temp_values.push_back(it->second);
+                total_size += it->second.size() + 1;  // +1 for null terminator
             } else {
-                std::size_t pos = line_buffer_->size();
-                *line_buffer_ += ".\0";
-                values.emplace_back(line_buffer_->data() + pos, 1);
+                temp_values.push_back(".");
+                total_size += 2;  // "." + null terminator
             }
         }
+        
+        // Reserve space in line_buffer to prevent reallocation
+        std::size_t start_pos = line_buffer_->size();
+        line_buffer_->reserve(start_pos + total_size);
+        
+        // Now append all values to line_buffer and create string_views
+        std::vector<std::string_view> values;
+        values.reserve(temp_values.size());
+        
+        for (const std::string& val : temp_values) {
+            std::size_t pos = line_buffer_->size();
+            *line_buffer_ += val;
+            *line_buffer_ += '\0';
+            values.emplace_back(line_buffer_->data() + pos, val.size());
+        }
+        
         samples_.push_back(std::move(values));
     }
     
@@ -312,7 +352,8 @@ public:
     /// @return Vector of format field names (e.g., ["GT", "DP", "GQ"])
     const std::vector<std::string>& get_format_fields() const {
         if (format_fields_.empty() && !format_.empty()) {
-            std::istringstream format_stream(format_);
+            std::string format_s(format_);  // Convert string_view to string
+            std::istringstream format_stream(format_s);
             std::string field;
             while (std::getline(format_stream, field, ':')) {
                 format_fields_.push_back(field);
@@ -479,7 +520,7 @@ public:
     void validate_basic_fields(validation_result& result, std::size_t line_num = 0) const {
         // Validate REF
         if (!is_valid_ref(ref_)) {
-            result.add_error("Invalid REF allele: " + ref_, line_num, "REF");
+            result.add_error("Invalid REF allele: " + std::string(ref_), line_num, "REF");
         }
         
         // Validate ALT alleles
@@ -582,21 +623,46 @@ public:
     }
 
 private:
-    std::string chrom_;
+    std::string_view chrom_;  // Zero-copy from arena
     std::size_t pos_;
-    std::string id_;
-    std::string ref_;
-    std::vector<std::string> alt_;
+    std::string_view id_;  // Zero-copy from arena
+    std::string_view ref_;  // Zero-copy from arena
+    std::vector<std::string> alt_;  // Small allocation (typically 1-2 alleles)
     double qual_;
-    std::string filter_;
-    std::map<std::string, std::string> info_;
-    std::string format_;
-    std::shared_ptr<std::string> line_buffer_;  // Keep source alive for string_views
+    std::string_view filter_;  // Zero-copy from arena
+    mutable std::string_view raw_info_view_;  // Raw INFO string from arena
+    mutable std::map<std::string, std::string> info_;  // Lazy parsed INFO cache
+    mutable bool info_parsed_ = false;  // Track if INFO has been parsed
+    std::string_view format_;  // Zero-copy from arena
+    std::shared_ptr<std::string> line_buffer_;  // Keep data alive for constructed records
     std::vector<std::vector<std::string_view>> samples_;  // Zero-copy indexed storage
     mutable std::vector<std::string> format_fields_; // Cached parsed format
 
+    /// @brief Lazy parse INFO field from raw string_view
+    void parse_info_lazy() const {
+        if (info_parsed_) return;
+        info_parsed_ = true;
+        
+        if (raw_info_view_.empty() || raw_info_view_ == ".") return;
+        
+        detail::split_view(raw_info_view_, ';', [this](std::string_view info_field) {
+            std::size_t eq_pos = info_field.find('=');
+            if (eq_pos != std::string_view::npos) {
+                info_.emplace(std::string(info_field.substr(0, eq_pos)),
+                             std::string(info_field.substr(eq_pos + 1)));
+            } else {
+                info_.emplace(std::string(info_field), "");
+            }
+        });
+    }
+
     /// @brief Convert INFO map to string format (for SV parsing)
     std::string get_info_string() const {
+        // If we have raw INFO and haven't parsed it, use raw
+        if (!info_parsed_ && !raw_info_view_.empty()) {
+            return raw_info_view_ == "." ? "." : std::string(raw_info_view_);
+        }
+        // Otherwise use the parsed map
         if (info_.empty()) return ".";
         
         std::ostringstream oss;
@@ -890,11 +956,11 @@ private:
             throw vcf_parse_error("Invalid VCF record: expected 8 fixed fields", line_number_);
         }
         
-        // Set basic fields (convert from string_view to string only when storing)
-        rec.set_chrom(std::string(chrom_view));
+        // Set basic fields (zero-copy with string_view)
+        rec.set_chrom(chrom_view);
         rec.set_pos(detail::parse_uint_fast(pos_view));
-        rec.set_id(id_view == "." ? "" : std::string(id_view));
-        rec.set_ref(std::string(ref_view));
+        rec.set_id(id_view == "." ? std::string_view() : id_view);
+        rec.set_ref(ref_view);
         
         // Parse ALT alleles (zero-copy split, then convert to strings)
         std::vector<std::string> alt_alleles;
@@ -912,28 +978,16 @@ private:
             rec.set_qual(0.0);
         }
         
-        // Set FILTER
-        rec.set_filter(filter_view == "." ? "" : std::string(filter_view));
+        // Set FILTER (zero-copy)
+        rec.set_filter(filter_view == "." ? std::string_view() : filter_view);
         
-        // Parse INFO (zero-copy split, use emplace for efficiency)
-        std::map<std::string, std::string> info_map;
-        if (info_view != ".") {
-            detail::split_view(info_view, ';', [&info_map](std::string_view info_field) {
-                std::size_t eq_pos = info_field.find('=');
-                if (eq_pos != std::string_view::npos) {
-                    info_map.emplace(std::string(info_field.substr(0, eq_pos)),
-                                    std::string(info_field.substr(eq_pos + 1)));
-                } else {
-                    info_map.emplace(std::string(info_field), "");
-                }
-            });
-        }
-        rec.set_info(info_map);
+        // Store raw INFO view for lazy parsing (zero-copy!)
+        rec.set_raw_info(info_view);
         
         // Parse FORMAT and sample data if present (ZERO-COPY with string_view!)
         if (fields.has_more()) {
             std::string_view format_view = fields.next();
-            rec.set_format(std::string(format_view));
+            rec.set_format(format_view);
             
             // Parse each sample - zero-copy string_view storage
             std::vector<std::vector<std::string_view>> samples;

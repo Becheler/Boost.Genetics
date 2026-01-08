@@ -30,7 +30,7 @@ struct reference_block {
 };
 
 /// Check if ALT field contains the NON_REF symbolic allele <*>
-inline bool is_non_ref_allele(const std::string& alt) {
+inline bool is_non_ref_allele(std::string_view alt) {
     return alt == "<*>" || alt == "<NON_REF>";
 }
 

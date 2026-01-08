@@ -107,7 +107,7 @@ inline bool is_nucleotide(char c) {
 }
 
 /// Validate REF allele (cannot be empty, must be nucleotides)
-inline bool is_valid_ref(const std::string& ref) {
+inline bool is_valid_ref(std::string_view ref) {
     if (ref.empty()) return false;
     
     for (std::size_t i = 0; i < ref.size(); ++i) {
@@ -118,7 +118,7 @@ inline bool is_valid_ref(const std::string& ref) {
 }
 
 /// Validate ALT allele (nucleotides, *, ., or symbolic <ID>)
-inline bool is_valid_alt(const std::string& alt) {
+inline bool is_valid_alt(std::string_view alt) {
     if (alt.empty()) return false;
     
     // Dot notation (no variant)
@@ -129,12 +129,12 @@ inline bool is_valid_alt(const std::string& alt) {
     
     // Symbolic allele <ID>
     if (alt.size() >= 3 && alt[0] == '<' && alt[alt.size() - 1] == '>') {
-        std::string id = alt.substr(1, alt.size() - 2);
+        std::string id(alt.substr(1, alt.size() - 2));
         return is_valid_vcf_id(id);
     }
     
     // Breakend notation (contains [ or ])
-    if (alt.find('[') != std::string::npos || alt.find(']') != std::string::npos) {
+    if (alt.find('[') != std::string_view::npos || alt.find(']') != std::string_view::npos) {
         return true;  // Complex validation handled separately
     }
     
@@ -254,7 +254,7 @@ inline bool validate_field_count(const std::vector<std::string>& fields,
 
 /// Validate FILTER field against header definitions
 template<typename FilterMap>
-inline void validate_filter(const std::string& filter, 
+inline void validate_filter(std::string_view filter, 
                             const FilterMap& filter_defs,
                             std::size_t line_num,
                             validation_result& result) {
@@ -263,7 +263,8 @@ inline void validate_filter(const std::string& filter,
     }
     
     // Can be semicolon-separated list
-    std::istringstream iss(filter);
+    std::string filter_str(filter);  // Convert to string first
+    std::istringstream iss(filter_str);
     std::string flt;
     while (std::getline(iss, flt, ';')) {
         if (flt != "PASS" && filter_defs.find(flt) == filter_defs.end()) {
@@ -296,13 +297,14 @@ inline void validate_info_keys(const std::string& info_str,
 
 /// Validate FORMAT keys against header definitions
 template<typename FormatMap>
-inline void validate_format_keys(const std::string& format_str,
+inline void validate_format_keys(std::string_view format_str,
                                  const FormatMap& format_defs,
                                  std::size_t line_num,
                                  validation_result& result) {
     if (format_str.empty()) return;
     
-    std::istringstream iss(format_str);
+    std::string format_s(format_str);  // Convert to string for istringstream
+    std::istringstream iss(format_s);
     std::string key;
     while (std::getline(iss, key, ':')) {
         if (format_defs.find(key) == format_defs.end()) {
