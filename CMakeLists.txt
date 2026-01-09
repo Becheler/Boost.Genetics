@@ -87,6 +87,19 @@ if(BUILD_BENCHMARKS)
     target_link_libraries(benchmark_vcf_parallel PRIVATE boost_genetics)
     find_package(Threads REQUIRED)
     target_link_libraries(benchmark_vcf_parallel PRIVATE Threads::Threads)
+    
+    # Memory profiling benchmark
+    add_executable(benchmark_memory benchmarks/benchmark_memory.cpp)
+    target_link_libraries(benchmark_memory PRIVATE boost_genetics)
+    
+    # Writer performance benchmark
+    add_executable(benchmark_writer benchmarks/benchmark_writer.cpp)
+    target_link_libraries(benchmark_writer PRIVATE boost_genetics)
+    
+    # Scalability benchmark
+    add_executable(benchmark_scalability benchmarks/benchmark_scalability.cpp)
+    target_link_libraries(benchmark_scalability PRIVATE boost_genetics)
+    target_link_libraries(benchmark_scalability PRIVATE Threads::Threads)
 endif()
 
 # Installation
