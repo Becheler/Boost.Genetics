@@ -30,20 +30,28 @@ jobs:
     - name: Build benchmarks
       run: |
         cmake -B build -DBUILD_BENCHMARKS=ON -DCMAKE_BUILD_TYPE=Release
-        cmake --build build --target benchmark_vcf_parallel benchmark_vcf_parsing -j$(nproc)
+        cmake --build build -j$(nproc)
     
-    - name: Test benchmarks (debug)
-      run: |
-        ls -lh tests/data/reference/chr22_subset.vcf
-        echo "Testing sequential benchmark..."
-        ./build/benchmark_vcf_parsing tests/data/reference/chr22_subset.vcf || echo "Sequential failed"
-        echo "Testing parallel benchmark with 1 thread..."
-        ./build/benchmark_vcf_parallel tests/data/reference/chr22_subset.vcf 1 || echo "Parallel (1 thread) failed"
-    
-    - name: Run benchmarks and generate report
+    - name: Run comprehensive benchmarks
       id: bench
       run: |
         mkdir -p benchmark_results
+        
+        # Run all benchmarks
+        echo "=== Memory Profiling ===" | tee benchmark_results/summary.txt
+        ./build/benchmark_memory tests/data/reference/chr22_subset.vcf 4 | tee benchmark_results/memory.txt
+        
+        echo -e "\n=== Writer Performance ===" | tee -a benchmark_results/summary.txt
+        ./build/benchmark_writer tests/data/reference/chr22_subset.vcf benchmark_results/test_output.vcf | tee benchmark_results/writer.txt
+        rm -f benchmark_results/test_output.vcf
+        
+        echo -e "\n=== Scalability (Quick) ===" | tee -a benchmark_results/summary.txt
+        ./build/benchmark_scalability --quick | tee benchmark_results/scalability.txt
+        
+        echo -e "\n=== Parallel Scaling ===" | tee -a benchmark_results/summary.txt
+        ./build/benchmark_scalability --parallel tests/data/reference/chr22_subset.vcf | tee benchmark_results/parallel.txt
+        
+        # Run original benchmarks for comparison
         ./scripts/generate_benchmark_report.sh benchmark_results/report.md
         
         # Extract metrics for outputs
